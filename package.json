@@ -1,0 +1,36 @@
+{
+  "name": "bunbolt",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c yellow,cyan \"bun --watch index.ts\" \"vite\"",
+    "build": "vite build",
+    "start": "bun index.ts",
+    "migrate:s3": "bun scripts/migrate-to-s3.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/markdown-it": "^14.2.0",
+    "@types/pg": "^8.23.1",
+    "@vitejs/plugin-vue": "^6.0.9",
+    "concurrently": "^10.0.5",
+    "vite": "^8.3.2"
+  },
+  "peerDependencies": {
+    "typescript": "^7"
+  },
+  "dependencies": {
+    "@opencode/cli": "^2.0.23",
+    "aws4fetch": "^1.0.20",
+    "drizzle-orm": "^0.45.3",
+    "hono": "^4.13.13",
+    "markdown-it": "^15.0.2",
+    "mysql2": "^3.24.5",
+    "pg": "^8.23.1",
+    "reka-ui": "^2.11.0",
+    "vue": "^3.5.43",
+    "vue-router": "^5.3.1"
+  }
+}

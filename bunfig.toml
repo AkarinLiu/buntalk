@@ -1,0 +1,4 @@
+[test]
+# Runs before every test file. Modules under test read their config from the
+# environment at import time, so this has to land first — see test/setup.ts.
+preload = ["./test/setup.ts"]
