@@ -4,7 +4,15 @@
  * Every non-2xx body is `{ error }`, so failures always surface as `ApiError`
  * with a message that is safe to render straight into a form.
  */
-import type { CategoryRow, PostRow, PublicUser, ThreadRow } from '../shared/types'
+import type {
+  CategoryRow,
+  PostRow,
+  PublicUser,
+  ReportRow,
+  SelfUser,
+  TagRow,
+  ThreadRow,
+} from '../shared/types'
 
 export class ApiError extends Error {
   constructor(
@@ -41,6 +49,9 @@ async function request<T>(path: string, method: string, body?: string): Promise<
   const res = await fetch(`/api${path}`, {
     method,
     credentials: 'same-origin',
+    // Admin/refresh reads must never come from the browser cache, or a just-
+    // changed row (e.g. a fresh ban) keeps rendering its old value.
+    cache: 'no-store',
     headers: body ? { 'Content-Type': 'application/json' } : {},
     body,
   })
@@ -78,8 +89,31 @@ export const http = {
 }
 
 // Response shapes that span more than one endpoint.
+/** The session user carries the account's own email; public profiles do not. */
 export interface SessionResponse {
-  user: PublicUser | null
+  user: SelfUser | null
+}
+/** Site info doubles as the first-run check: `needsSetup` is true on an empty install. */
+export interface SetupStatusResponse {
+  needsSetup: boolean
+  siteName: string
+  siteDescription: string
+}
+export interface MetaResponse {
+  mailConfigured: boolean
+  /** forced email binding is on and effective (needs SMTP) */
+  requireEmail: boolean
+}
+export interface EmailBindResponse {
+  email: string
+  emailVerified: boolean
+  /** a confirmation code was mailed (only when mail is configured) */
+  codeSent: boolean
+  mailConfigured: boolean
+}
+export interface ResetStartResponse {
+  ok: true
+  mailConfigured: boolean
 }
 export interface ThreadDetailResponse {
   thread: ThreadRow
@@ -106,3 +140,5 @@ export interface UploadResponse {
 }
 export type CategoriesResponse = CategoryRow[]
 export type ThreadsResponse = ThreadRow[]
+export type TagsResponse = TagRow[]
+export type ReportsResponse = ReportRow[]

@@ -24,8 +24,8 @@ function onOpenChange(value: boolean): void {
 <template>
   <DialogRoot :open="open" @update:open="onOpenChange">
     <DialogPortal>
-      <DialogOverlay />
-      <DialogContent>
+      <DialogOverlay class="dialog-overlay" />
+      <DialogContent class="dialog-content">
         <h2 class="dialog-title">{{ title }}</h2>
         <DialogDescription class="dialog-desc">{{ message }}</DialogDescription>
         <div class="dialog-actions">

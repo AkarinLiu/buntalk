@@ -11,6 +11,7 @@ const emit = defineEmits<{
   like: [postId: number]
   remove: [postId: number]
   reply: [postId: number]
+  report: [postId: number]
 }>()
 
 const post = computed(() => props.node.post)
@@ -19,6 +20,9 @@ const canManage = computed(() => {
   const user = auth.user
   return !!user && (user.role === 'admin' || user.id === props.node.post.authorId)
 })
+
+/** Anyone logged in can report, except the author of the post itself. */
+const canReport = computed(() => !!auth.user && auth.user.id !== props.node.post.authorId)
 
 const likes = computed(() => post.value.likeCount ?? 0)
 const liked = computed(() => post.value.likedByMe ?? false)
@@ -71,6 +75,15 @@ const time = (iso: string) => iso.replace('T', ' ').slice(0, 16)
         </button>
 
         <button
+          v-if="canReport"
+          class="btn btn-ghost btn-sm"
+          type="button"
+          @click="emit('report', post.id)"
+        >
+          举报
+        </button>
+
+        <button
           v-if="canManage"
           class="btn btn-danger btn-sm"
           type="button"
@@ -88,6 +101,7 @@ const time = (iso: string) => iso.replace('T', ' ').slice(0, 16)
           @like="(id) => emit('like', id)"
           @remove="(id) => emit('remove', id)"
           @reply="(id) => emit('reply', id)"
+          @report="(id) => emit('report', id)"
         />
       </div>
     </div>

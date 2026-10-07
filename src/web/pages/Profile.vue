@@ -2,8 +2,9 @@
 import { onMounted, ref, watch } from 'vue'
 import { errMessage, http, uploadFile } from '../api'
 import type { ProfileResponse, ThreadsResponse } from '../api'
-import type { PublicUser, ThreadRow } from '../../shared/types'
+import type { PublicUser, SelfUser, ThreadRow } from '../../shared/types'
 import { auth } from '../store'
+import EmailBindCard from '../components/EmailBindCard.vue'
 import UserAvatar from '../components/UserAvatar.vue'
 
 const props = defineProps<{ username: string }>()
@@ -59,7 +60,7 @@ watch(
 async function saveProfile(): Promise<void> {
   error.value = ''
   try {
-    const { user: updated } = await http.patch<{ user: PublicUser }>('/users/me', {
+    const { user: updated } = await http.patch<{ user: SelfUser }>('/users/me', {
       displayName: displayName.value.trim(),
       bio: bio.value.trim(),
       avatarUrl: avatarUrl.value.trim(),
@@ -152,6 +153,10 @@ const joined = (iso: string) => iso.slice(0, 10)
             <b>{{ postCount }}</b>
             <span>回复</span>
           </div>
+          <div>
+            <b>{{ user.credit }}</b>
+            <span>信用分</span>
+          </div>
           <div v-if="isSelf()">
             <button class="btn btn-sm" type="button" @click="editing = !editing">
               {{ editing ? '取消编辑' : '编辑资料' }}
@@ -159,6 +164,8 @@ const joined = (iso: string) => iso.slice(0, 10)
           </div>
         </div>
       </section>
+
+      <EmailBindCard v-if="isSelf()" style="margin-top: 16px" />
 
       <form
         v-if="editing && isSelf()"
@@ -216,11 +223,13 @@ const joined = (iso: string) => iso.slice(0, 10)
           <div v-for="thread in threads" :key="thread.id" class="thread-row">
             <div class="thread-main">
               <div class="thread-title">
-                <span v-if="thread.isPinned" class="pill pill-accent">置顶</span>
+                <span v-if="thread.isGlobalPinned" class="pill pill-global">全站置顶</span>
+                <span v-if="thread.isAllBoardsPinned" class="pill pill-accent">全板块置顶</span>
+                <span v-if="thread.isPinned" class="pill">置顶</span>
                 <span v-if="thread.isLocked" class="pill pill-danger">锁定</span>
                 <router-link :to="`/t/${thread.id}`">{{ thread.title }}</router-link>
               </div>
-              <div class="thread-sub">最新活动 {{ time(thread.lastPostAt) }}</div>
+              <div class="thread-sub">最新活动 {{ time(thread.lastPostAt) }} · {{ thread.viewCount }} 浏览</div>
             </div>
 
             <div class="count">

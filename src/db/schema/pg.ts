@@ -10,11 +10,27 @@ export const users = pgTable('users', {
   avatarUrl: text('avatar_url').notNull(),
   role: text('role').notNull(),
   banned: boolean('banned').notNull(),
+  credit: integer('credit').notNull(),
+  banReason: text('ban_reason').notNull(),
+  bannedUntil: text('banned_until'),
+  createdAt: text('created_at').notNull(),
+  email: text('email').notNull(),
+  emailVerified: boolean('email_verified').notNull(),
+  sessionVersion: integer('session_version').notNull(),
+})
+
+export const emailTokens = pgTable('email_tokens', {
+  userId: integer('user_id').notNull(),
+  kind: text('kind').notNull(),
+  codeHash: text('code_hash').notNull(),
+  expiresAt: text('expires_at').notNull(),
+  attempts: integer('attempts').notNull(),
   createdAt: text('created_at').notNull(),
 })
 
 export const categories = pgTable('categories', {
   id: serial('id').primaryKey(),
+  parentId: integer('parent_id'),
   name: text('name').notNull(),
   description: text('description').notNull(),
   position: integer('position').notNull(),
@@ -27,6 +43,9 @@ export const threads = pgTable('threads', {
   title: text('title').notNull(),
   isPinned: boolean('is_pinned').notNull(),
   isLocked: boolean('is_locked').notNull(),
+  isGlobalPinned: boolean('is_global_pinned').notNull(),
+  isAllBoardsPinned: boolean('is_all_boards_pinned').notNull(),
+  viewCount: integer('view_count').notNull(),
   createdAt: text('created_at').notNull(),
   lastPostAt: text('last_post_at').notNull(),
 })
@@ -43,4 +62,33 @@ export const posts = pgTable('posts', {
 export const postLikes = pgTable('post_likes', {
   postId: integer('post_id').notNull(),
   userId: integer('user_id').notNull(),
+})
+
+export const tags = pgTable('tags', {
+  id: serial('id').primaryKey(),
+  name: text('name').notNull().unique(),
+})
+
+export const threadTags = pgTable('thread_tags', {
+  threadId: integer('thread_id').notNull(),
+  tagId: integer('tag_id').notNull(),
+})
+
+export const reports = pgTable('reports', {
+  id: serial('id').primaryKey(),
+  reporterId: integer('reporter_id').notNull(),
+  targetType: text('target_type').notNull(),
+  targetId: integer('target_id').notNull(),
+  reason: text('reason').notNull(),
+  status: text('status').notNull(),
+  createdAt: text('created_at').notNull(),
+  handledBy: integer('handled_by'),
+  handledAt: text('handled_at'),
+})
+
+// Single row (id = 1); the DDL pins that with a CHECK constraint.
+export const settings = pgTable('settings', {
+  id: integer('id').primaryKey(),
+  siteName: text('site_name').notNull(),
+  siteDescription: text('site_description').notNull(),
 })

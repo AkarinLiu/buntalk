@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { errMessage, http } from '../api'
-import type { CategoriesResponse, IdResponse } from '../api'
-import type { CategoryRow } from '../../shared/types'
+import type { CategoriesResponse, IdResponse, TagsResponse } from '../api'
+import type { CategoryRow, TagRow } from '../../shared/types'
 import MarkdownEditor from '../components/MarkdownEditor.vue'
 import { auth } from '../store'
 
@@ -11,11 +11,23 @@ const props = defineProps<{ presetCategory?: number }>()
 const router = useRouter()
 
 const categories = ref<CategoryRow[]>([])
+const tags = ref<TagRow[]>([])
 const categoryId = ref<number>(props.presetCategory ?? 0)
+const selectedTags = ref<number[]>([])
 const title = ref('')
 const body = ref('')
 const error = ref('')
 const submitting = ref(false)
+
+/** Top-level 版块 each followed by its 子版块, so the select reads as a tree. */
+const categoryOptions = computed(() => {
+  const out: CategoryRow[] = []
+  for (const top of categories.value.filter((c) => c.parentId === null)) {
+    out.push(top)
+    out.push(...categories.value.filter((c) => c.parentId === top.id))
+  }
+  return out
+})
 
 onMounted(async () => {
   if (!auth.user) {
@@ -23,9 +35,14 @@ onMounted(async () => {
     return
   }
   try {
-    categories.value = await http.get<CategoriesResponse>('/categories')
-    if (!categoryId.value && categories.value.length) {
-      categoryId.value = categories.value[0]!.id
+    const [cats, allTags] = await Promise.all([
+      http.get<CategoriesResponse>('/categories'),
+      http.get<TagsResponse>('/tags'),
+    ])
+    categories.value = cats
+    tags.value = allTags
+    if (!categoryId.value && categoryOptions.value.length) {
+      categoryId.value = categoryOptions.value[0]!.id
     }
   } catch (err) {
     error.value = errMessage(err, '加载版块失败')
@@ -40,6 +57,7 @@ async function submit(): Promise<void> {
       categoryId: categoryId.value,
       title: title.value.trim(),
       body: body.value.trim(),
+      tagIds: selectedTags.value,
     })
     await router.push(`/t/${id}`)
   } catch (err) {
@@ -63,11 +81,21 @@ async function submit(): Promise<void> {
       <label class="field">
         <span>版块</span>
         <select v-model.number="categoryId" required>
-          <option v-for="category in categories" :key="category.id" :value="category.id">
-            {{ category.name }}
+          <option v-for="category in categoryOptions" :key="category.id" :value="category.id">
+            {{ category.parentId ? `— ${category.name}` : category.name }}
           </option>
         </select>
       </label>
+
+      <div v-if="tags.length" class="field">
+        <span>标签（可选，最多 10 个）</span>
+        <div class="tag-picker">
+          <label v-for="tag in tags" :key="tag.id" class="tag-choice">
+            <input v-model="selectedTags" type="checkbox" :value="tag.id" />
+            {{ tag.name }}
+          </label>
+        </div>
+      </div>
 
       <label class="field">
         <span>标题</span>

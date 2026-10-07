@@ -1,4 +1,4 @@
-# bunbolt — Agent Notes
+# buntalk — Agent Notes
 
 A forum framework: Bun + Hono backend, Vue 3 + Vite frontend, Reka UI components,
 and one codebase that runs on SQLite, PostgreSQL or MySQL.
@@ -36,6 +36,7 @@ src/db/repo.ts           every query, written once for all three engines
 src/server/app.ts        Hono app: /api first, /uploads, static SPA last
 src/server/routes.ts     the whole API surface
 src/server/storage.ts    local/S3 object storage, one `put`/`publicUrl` pair
+src/server/mailer.ts     SMTP sending; no client is built unless SMTP_HOST is set
 src/server/filetype.ts   magic-byte sniffing — the upload security boundary
 src/web/                 Vue app; `pages/` are routes, `components/` are pieces
 src/web/markdown.ts      the markdown renderer — a security boundary, see below
@@ -120,7 +121,7 @@ the SPA fallback had to learn to keep its hands off both.
 preloads `test/setup.ts`, which pins `DATABASE_URL=:memory:`,
 `STORAGE_DRIVER=local` and a temp `UPLOAD_DIR` *before* any module reads its
 config. Do not rely on setting env vars inside a test file — that was
-order-dependent and once created a real `bunbolt.db` in the repo.
+order-dependent and once created a real `buntalk.db` in the repo.
 
 **The s3 storage branch is tested out-of-process** (`test/s3.test.ts` spawning
 `test/s3-probe.ts`), because `storage.ts` reads its configuration at import time
@@ -132,6 +133,13 @@ assertions pass for the wrong reason.
 template — no `!` assertions, no `(v: boolean) =>` on inline handlers. Inline
 handlers with arguments do **not** receive `$event` implicitly; write
 `@update:model-value="fn(thread, 'isPinned', $event)"`.
+
+**A `ref` is unwrapped in a template, so passing it to a helper passes its
+value.** `@click="addRow(categories)"` compiles to `addRow(categories.value)`,
+so the helper must take the array (`list: string[]`), not the ref. Typing it as
+`typeof categories` and calling `list.value.push()` typechecks and builds (no
+`vue-tsc`) but throws at runtime — this is how the setup wizard's add-row buttons
+broke.
 
 **`tsc --noEmit` does not check `.vue` files** (they are shimmed in
 `src/web/env.d.ts`) and Vite does not typecheck. `bun run build` is the real

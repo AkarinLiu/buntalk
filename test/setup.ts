@@ -14,4 +14,4 @@ import { join } from 'node:path'
 process.env.DATABASE_URL = ':memory:'
 // Forces the local driver even when real S3 credentials sit in `.env`.
 process.env.STORAGE_DRIVER = 'local'
-process.env.UPLOAD_DIR = mkdtempSync(join(tmpdir(), 'bunbolt-test-'))
+process.env.UPLOAD_DIR = mkdtempSync(join(tmpdir(), 'buntalk-test-'))

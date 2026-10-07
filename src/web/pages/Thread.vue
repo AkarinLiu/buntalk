@@ -8,6 +8,8 @@ import type { PostRow, ThreadRow } from '../../shared/types'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import MarkdownEditor from '../components/MarkdownEditor.vue'
 import PostItem from '../components/PostItem.vue'
+import ReportDialog from '../components/ReportDialog.vue'
+import TagList from '../components/TagList.vue'
 import { buildPostTree } from '../postTree'
 import { auth } from '../store'
 
@@ -28,6 +30,9 @@ const replyBox = ref<{ focus: () => void } | null>(null)
 const confirmPostId = ref<number | null>(null)
 const confirmThreadDelete = ref(false)
 
+const reportTarget = ref<{ type: 'thread' | 'post'; id: number; label?: string } | null>(null)
+const reportNotice = ref('')
+
 const isAdmin = computed(() => auth.user?.role === 'admin')
 const tree = computed(() => buildPostTree(posts.value))
 /** The opening post — the default target for a reply to the thread itself. */
@@ -47,11 +52,26 @@ async function load(): Promise<void> {
   }
 }
 
-onMounted(() => void load())
+onMounted(() => void load().then(recordView))
 watch(
   () => props.id,
-  () => void load(),
+  () => void load().then(recordView),
 )
+
+/**
+ * View beacon: fires once per page open, after the detail load so the shown
+ * count is the post-increment one. Reloads after a reply/delete skip it.
+ */
+async function recordView(): Promise<void> {
+  try {
+    const { viewCount } = await http.post<{ viewCount: number }>(
+      `/threads/${Number(props.id)}/view`,
+    )
+    if (thread.value) thread.value.viewCount = viewCount
+  } catch {
+    // a failed beacon is not worth surfacing to the reader
+  }
+}
 
 async function onLike(postId: number): Promise<void> {
   if (!auth.user) return
@@ -110,7 +130,7 @@ async function deleteThread(): Promise<void> {
   }
 }
 
-async function setFlag(flag: 'isPinned' | 'isLocked', value: boolean): Promise<void> {
+async function setFlag(flag: 'isPinned' | 'isGlobalPinned' | 'isAllBoardsPinned' | 'isLocked', value: boolean): Promise<void> {
   if (!thread.value) return
   try {
     await http.patch(`/admin/threads/${thread.value.id}`, { [flag]: value })
@@ -125,9 +145,20 @@ async function setFlag(flag: 'isPinned' | 'isLocked', value: boolean): Promise<v
 // keeping these named makes the ref assignment explicit rather than relying on
 // template auto-unwrapping.
 const onPinned = (value: boolean): void => void setFlag('isPinned', value)
+const onGlobalPinned = (value: boolean): void => void setFlag('isGlobalPinned', value)
+const onAllBoardsPinned = (value: boolean): void => void setFlag('isAllBoardsPinned', value)
 const onLocked = (value: boolean): void => void setFlag('isLocked', value)
 const askDeletePost = (postId: number): void => {
   confirmPostId.value = postId
+}
+
+function askReportPost(postId: number): void {
+  const post = posts.value.find((p) => p.id === postId)
+  reportTarget.value = { type: 'post', id: postId, label: post?.body.slice(0, 40) }
+}
+
+function onReported(): void {
+  reportNotice.value = '举报已提交，管理员会尽快处理。'
 }
 
 const time = (iso: string) => iso.replace('T', ' ').slice(0, 16)
@@ -147,25 +178,57 @@ const time = (iso: string) => iso.replace('T', ' ').slice(0, 16)
         <div style="min-width: 0">
           <h1 style="font-size: 26px">{{ thread.title }}</h1>
           <div class="thread-sub" style="margin-top: 8px">
-            <span v-if="thread.isPinned" class="pill pill-accent">置顶</span>
+            <span v-if="thread.isGlobalPinned" class="pill pill-global">全站置顶</span>
+            <span v-if="thread.isAllBoardsPinned" class="pill pill-accent">全板块置顶</span>
+            <span v-if="thread.isPinned" class="pill">置顶</span>
             <span v-if="thread.isLocked" class="pill pill-danger">锁定</span>
             {{ thread.author?.displayName }} · {{ time(thread.createdAt) }} ·
-            {{ thread.postCount ?? 0 }} 条回复
+            {{ thread.postCount ?? 0 }} 条回复 · {{ thread.viewCount }} 浏览
           </div>
+          <TagList :tags="thread.tags" style="margin-top: 10px" />
         </div>
         <span class="spacer"></span>
 
+        <button
+          v-if="auth.user && auth.user.id !== thread.authorId"
+          class="btn btn-ghost btn-sm"
+          type="button"
+          @click="reportTarget = { type: 'thread', id: thread.id, label: thread.title }"
+        >
+          举报主题
+        </button>
+
         <template v-if="isAdmin">
           <label class="flag-toggle">
+            <span>全站置顶</span>
+            <SwitchRoot
+              class="switch-root"
+              :model-value="thread.isGlobalPinned"
+              @update:model-value="onGlobalPinned"
+            >
+              <SwitchThumb class="switch-thumb" />
+            </SwitchRoot>
+          </label>
+          <label class="flag-toggle">
+            <span>全板块置顶</span>
+            <SwitchRoot
+              class="switch-root"
+              :model-value="thread.isAllBoardsPinned"
+              @update:model-value="onAllBoardsPinned"
+            >
+              <SwitchThumb class="switch-thumb" />
+            </SwitchRoot>
+          </label>
+          <label class="flag-toggle">
             <span>置顶</span>
-            <SwitchRoot :model-value="thread.isPinned" @update:model-value="onPinned">
-              <SwitchThumb />
+            <SwitchRoot class="switch-root" :model-value="thread.isPinned" @update:model-value="onPinned">
+              <SwitchThumb class="switch-thumb" />
             </SwitchRoot>
           </label>
           <label class="flag-toggle">
             <span>锁定</span>
-            <SwitchRoot :model-value="thread.isLocked" @update:model-value="onLocked">
-              <SwitchThumb />
+            <SwitchRoot class="switch-root" :model-value="thread.isLocked" @update:model-value="onLocked">
+              <SwitchThumb class="switch-thumb" />
             </SwitchRoot>
           </label>
           <button class="btn btn-danger btn-sm" type="button" @click="confirmThreadDelete = true">
@@ -175,6 +238,7 @@ const time = (iso: string) => iso.replace('T', ' ').slice(0, 16)
       </div>
 
       <p v-if="notice" class="form-error">{{ notice }}</p>
+      <p v-if="reportNotice" class="form-ok">{{ reportNotice }}</p>
 
       <div class="card" style="overflow: hidden">
         <PostItem
@@ -184,6 +248,7 @@ const time = (iso: string) => iso.replace('T', ' ').slice(0, 16)
           @like="onLike"
           @reply="startReply"
           @remove="askDeletePost"
+          @report="askReportPost"
         />
       </div>
 
@@ -238,6 +303,15 @@ const time = (iso: string) => iso.replace('T', ' ').slice(0, 16)
       message="将删除整个主题及其全部回复，此操作不可撤销。"
       @cancel="confirmThreadDelete = false"
       @confirm="deleteThread"
+    />
+
+    <ReportDialog
+      :open="reportTarget !== null"
+      :target-type="reportTarget?.type ?? 'post'"
+      :target-id="reportTarget?.id ?? 0"
+      :target-label="reportTarget?.label"
+      @close="reportTarget = null"
+      @submitted="onReported"
     />
   </div>
 </template>

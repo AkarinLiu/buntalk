@@ -58,25 +58,25 @@ describe('s3 driver configuration', () => {
       ...CREDS,
       STORAGE_DRIVER: 's3',
       S3_ENDPOINT: 'https://minio.local:9000',
-      S3_BUCKET: 'bunbolt',
+      S3_BUCKET: 'buntalk',
     })
     expect(code).toBe(0)
-    expect(stdout).toStartWith('https://minio.local:9000/bunbolt/a.png?')
+    expect(stdout).toStartWith('https://minio.local:9000/buntalk/a.png?')
   })
 
   test('with no endpoint it falls back to the AWS virtual-host form', async () => {
     const { stdout, code } = await probe({
       ...CREDS,
       STORAGE_DRIVER: 's3',
-      S3_BUCKET: 'bunbolt',
+      S3_BUCKET: 'buntalk',
       S3_REGION: 'eu-west-1',
     })
     expect(code).toBe(0)
-    expect(stdout).toStartWith('https://bunbolt.s3.eu-west-1.amazonaws.com/a.png?')
+    expect(stdout).toStartWith('https://buntalk.s3.eu-west-1.amazonaws.com/a.png?')
   })
 
   test('a private bucket gets a presigned URL with an expiry', async () => {
-    const { stdout } = await probe({ ...CREDS, STORAGE_DRIVER: 's3', S3_BUCKET: 'bunbolt' })
+    const { stdout } = await probe({ ...CREDS, STORAGE_DRIVER: 's3', S3_BUCKET: 'buntalk' })
     expect(stdout).toContain('X-Amz-Signature=')
     expect(stdout).toContain('X-Amz-Expires=')
     expect(stdout).toContain('X-Amz-Credential=')
@@ -86,7 +86,7 @@ describe('s3 driver configuration', () => {
     const { stdout } = await probe({
       ...CREDS,
       STORAGE_DRIVER: 's3',
-      S3_BUCKET: 'bunbolt',
+      S3_BUCKET: 'buntalk',
       S3_URL_TTL: '60',
     })
     expect(stdout).toContain('X-Amz-Expires=60')
@@ -96,7 +96,7 @@ describe('s3 driver configuration', () => {
     const { stdout } = await probe({
       ...CREDS,
       STORAGE_DRIVER: 's3',
-      S3_BUCKET: 'bunbolt',
+      S3_BUCKET: 'buntalk',
       S3_PUBLIC_URL: 'https://cdn.example.com',
     })
     expect(stdout).toBe('https://cdn.example.com/a.png')
@@ -115,7 +115,7 @@ describe('s3 driver misconfiguration', () => {
     // No STORAGE_DRIVER: presence of credentials is what flips it.
     const { code, stdout } = await probe({
       ...CREDS,
-      S3_BUCKET: 'bunbolt',
+      S3_BUCKET: 'buntalk',
       S3_PUBLIC_URL: 'https://cdn.example.com',
     })
     expect(code).toBe(0)

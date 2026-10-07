@@ -1,5 +1,5 @@
 {
-  "name": "bunbolt",
+  "name": "buntalk",
   "module": "index.ts",
   "type": "module",
   "private": true,
@@ -28,6 +28,7 @@
     "hono": "^4.13.13",
     "markdown-it": "^15.0.2",
     "mysql2": "^3.24.5",
+    "nodemailer": "^10.0.15",
     "pg": "^8.23.1",
     "reka-ui": "^2.11.0",
     "vue": "^3.5.43",

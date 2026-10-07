@@ -19,10 +19,19 @@ export type {
   UserRow,
   UserAuthRow,
   CategoryRow,
+  TagRow,
+  SettingsRow,
   ThreadRow,
   PostRow,
   PublicUser,
+  SelfUser,
+  AdminUser,
+  ReportRow,
+  ReportStatus,
+  ReportTarget,
   Role,
+  EmailTokenKind,
+  EmailTokenRow,
 } from '../shared/types'
 
 function detect(url: string): Dialect {
@@ -34,10 +43,10 @@ function detect(url: string): Dialect {
 /** `sqlite:./x.db`, `file:./x.db`, `./x.db` and `:memory:` all reach a path. */
 function sqlitePath(url: string): string {
   const stripped = url.replace(/^sqlite(\+file)?:\/\//i, '').replace(/^file:\/\//i, '')
-  return stripped === '' ? './bunbolt.db' : stripped
+  return stripped === '' ? './buntalk.db' : stripped
 }
 
-const url = process.env.DATABASE_URL?.trim() || './bunbolt.db'
+const url = process.env.DATABASE_URL?.trim() || './buntalk.db'
 const kind = detect(url)
 
 let db: any
@@ -87,8 +96,15 @@ export async function ensureSchema(): Promise<void> {
     try {
       exec(stmt)
     } catch (err) {
-      console.error(`\n[bunbolt] schema statement failed (${kind}):\n${stmt.trim()}\n`)
+      console.error(`\n[buntalk] schema statement failed (${kind}):\n${stmt.trim()}\n`)
       throw err
+    }
+  }
+  for (const stmt of set.patches) {
+    try {
+      exec(stmt)
+    } catch {
+      // column already added on a fresh bootstrap — nothing to do
     }
   }
   for (const stmt of set.indexes) {

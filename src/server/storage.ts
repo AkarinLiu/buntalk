@@ -39,7 +39,7 @@ export const driver: Driver =
 
 if (driver === 's3' && !configured) {
   throw new Error(
-    '[bunbolt] STORAGE_DRIVER=s3 requires S3_BUCKET, S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY',
+    '[buntalk] STORAGE_DRIVER=s3 requires S3_BUCKET, S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY',
   )
 }
 

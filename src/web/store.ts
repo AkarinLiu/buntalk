@@ -4,10 +4,10 @@
 import { reactive } from 'vue'
 import { http } from './api'
 import type { SessionResponse } from './api'
-import type { PublicUser } from '../shared/types'
+import type { SelfUser } from '../shared/types'
 
 export const auth = reactive<{
-  user: PublicUser | null
+  user: SelfUser | null
   loaded: boolean
 }>({
   user: null,

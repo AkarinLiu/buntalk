@@ -10,7 +10,7 @@
 import { Hono } from 'hono'
 import { serveStatic } from 'hono/bun'
 import { join } from 'node:path'
-import { session } from './auth'
+import { emailGate, session } from './auth'
 import { api } from './routes'
 import * as storage from './storage'
 import type { AppEnv } from './auth'
@@ -21,6 +21,9 @@ const distIndex = join(distDir, 'index.html')
 export const app = new Hono<AppEnv>()
 
 app.use('/api/*', session)
+// Runs after session (it needs `c.var.user`) and before every route, so forced
+// email binding cannot be bypassed by calling the API directly.
+app.use('/api/*', emailGate)
 app.route('/api', api)
 
 // Uploaded objects. The public path is backend-independent, which is what lets

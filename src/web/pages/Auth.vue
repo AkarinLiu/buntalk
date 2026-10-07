@@ -62,14 +62,14 @@ async function submit(): Promise<void> {
 
     <form class="card card-pad" @submit.prevent="submit">
       <label class="field">
-        <span>用户名</span>
+        <span>{{ isRegister ? '用户名' : '用户名或邮箱' }}</span>
         <input
           v-model="username"
           type="text"
           autocomplete="username"
-          maxlength="32"
+          :maxlength="isRegister ? 32 : 254"
           required
-          placeholder="字母、数字、下划线或中文"
+          :placeholder="isRegister ? '字母、数字、下划线或中文' : '用户名或邮箱'"
         />
       </label>
 
@@ -89,6 +89,10 @@ async function submit(): Promise<void> {
           required
         />
       </label>
+
+      <p v-if="!isRegister" class="muted" style="margin: -4px 0 14px; text-align: right; font-size: 13px">
+        <router-link to="/reset">忘记密码？</router-link>
+      </p>
 
       <button class="btn btn-primary" type="submit" style="width: 100%" :disabled="submitting">
         {{ submitting ? '请稍候…' : isRegister ? '创建账号' : '登录' }}
