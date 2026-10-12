@@ -9,6 +9,7 @@ export const users = sqliteTable('users', {
   bio: text('bio').notNull(),
   avatarUrl: text('avatar_url').notNull(),
   role: text('role').notNull(),
+  groupId: integer('group_id'),
   banned: integer('banned', { mode: 'boolean' }).notNull(),
   credit: integer('credit').notNull(),
   banReason: text('ban_reason').notNull(),
@@ -26,6 +27,13 @@ export const emailTokens = sqliteTable('email_tokens', {
   expiresAt: text('expires_at').notNull(),
   attempts: integer('attempts').notNull(),
   createdAt: text('created_at').notNull(),
+})
+
+export const userGroups = sqliteTable('user_groups', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull().unique(),
+  color: text('color').notNull(),
+  position: integer('position').notNull(),
 })
 
 export const categories = sqliteTable('categories', {
@@ -86,9 +94,50 @@ export const reports = sqliteTable('reports', {
   handledAt: text('handled_at'),
 })
 
+// Private conversations, their members and their messages.
+export const dmThreads = sqliteTable('dm_threads', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  title: text('title').notNull(),
+  creatorId: integer('creator_id').notNull(),
+  createdAt: text('created_at').notNull(),
+  lastMessageAt: text('last_message_at').notNull(),
+})
+
+export const dmParticipants = sqliteTable('dm_participants', {
+  threadId: integer('thread_id').notNull(),
+  userId: integer('user_id').notNull(),
+  lastReadAt: text('last_read_at'),
+})
+
+export const dmMessages = sqliteTable('dm_messages', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  threadId: integer('thread_id').notNull(),
+  authorId: integer('author_id').notNull(),
+  body: text('body').notNull(),
+  createdAt: text('created_at').notNull(),
+})
+
 // Single row (id = 1); the DDL pins that with a CHECK constraint.
 export const settings = sqliteTable('settings', {
   id: integer('id').primaryKey(),
   siteName: text('site_name').notNull(),
   siteDescription: text('site_description').notNull(),
+  siteNotice: text('site_notice').notNull(),
+  siteFooter: text('site_footer').notNull(),
+})
+
+export const reportReasons = sqliteTable('report_reasons', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  label: text('label').notNull().unique(),
+  position: integer('position').notNull(),
+})
+
+export const drafts = sqliteTable('drafts', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  authorId: integer('author_id').notNull(),
+  categoryId: integer('category_id'),
+  title: text('title').notNull(),
+  body: text('body').notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
 })

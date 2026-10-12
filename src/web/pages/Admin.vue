@@ -16,9 +16,27 @@ import {
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { errMessage, http } from '../api'
-import type { ReportsResponse, TagsResponse } from '../api'
-import type { AdminUser, CategoryRow, ReportRow, Role, TagRow, ThreadRow } from '../../shared/types'
+import type {
+  GroupsResponse,
+  ReportReasonsResponse,
+  ReportsResponse,
+  SettingsResponse,
+  SetupStatusResponse,
+  TagsResponse,
+} from '../api'
+import type {
+  AdminUser,
+  CategoryRow,
+  ReportReasonRow,
+  ReportRow,
+  Role,
+  SettingsRow,
+  TagRow,
+  ThreadRow,
+  UserGroupRow,
+} from '../../shared/types'
 import { auth } from '../store'
+import { setup } from '../setup'
 import BanDialog from '../components/BanDialog.vue'
 import UserAvatar from '../components/UserAvatar.vue'
 
@@ -33,12 +51,36 @@ const error = ref('')
 
 const categories = ref<CategoryRow[]>([])
 const users = ref<UserRowWithCount[]>([])
+const userEditing = ref<UserRowWithCount | null>(null)
+const userForm = ref({ displayName: '', bio: '', avatarUrl: '' })
+const userSaving = ref(false)
 const threads = ref<ThreadRow[]>([])
 const tags = ref<TagRow[]>([])
 const newTagName = ref('')
+const groups = ref<UserGroupRow[]>([])
+const groupDialogOpen = ref(false)
+const groupForm = ref<{ id: number; name: string; color: string; position: number }>({
+  id: 0,
+  name: '',
+  color: '#f5b32c',
+  position: 0,
+})
+const groupDeleting = ref<UserGroupRow | null>(null)
 
 const reports = ref<ReportRow[]>([])
+const reportReasons = ref<ReportReasonRow[]>([])
+const newReason = ref('')
 const reportFilter = ref<'open' | 'all'>('open')
+
+const settings = ref<SettingsRow>({
+  siteName: '',
+  siteDescription: '',
+  siteNotice: '',
+  siteFooter: '',
+})
+const savingSettings = ref(false)
+const settingsNotice = ref('')
+const settingsError = ref('')
 const banTarget = ref<{ id: number; displayName: string } | null>(null)
 const banReasonHint = ref('')
 
@@ -65,13 +107,16 @@ async function loadAll(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
-    const [c, u, t, g, r, m] = await Promise.all([
+    const [c, u, t, g, r, m, gr, st, rr] = await Promise.all([
       http.get<CategoryRow[]>('/categories'),
       http.get<UserRowWithCount[]>('/admin/users'),
       http.get<ThreadRow[]>('/admin/threads?limit=100'),
       http.get<TagsResponse>('/tags'),
       http.get<ReportsResponse>('/admin/reports'),
       http.get<{ configured: boolean; from: string }>('/admin/mail'),
+      http.get<GroupsResponse>('/groups'),
+      http.get<SetupStatusResponse>('/setup/status'),
+      http.get<ReportReasonsResponse>('/report-reasons'),
     ])
     categories.value = c
     users.value = u
@@ -79,6 +124,14 @@ async function loadAll(): Promise<void> {
     tags.value = g
     reports.value = r
     mail.value = m
+    groups.value = gr
+    settings.value = {
+      siteName: st.siteName,
+      siteDescription: st.siteDescription,
+      siteNotice: st.siteNotice,
+      siteFooter: st.siteFooter,
+    }
+    reportReasons.value = rr
   } catch (err) {
     error.value = errMessage(err, '加载失败')
   } finally {
@@ -187,6 +240,120 @@ async function deleteTag(tag: TagRow): Promise<void> {
   }
 }
 
+// ------------------------------------------------------------- 用户组
+
+function openCreateGroup(): void {
+  groupForm.value = { id: 0, name: '', color: '#f5b32c', position: groups.value.length }
+  groupDialogOpen.value = true
+}
+
+function openEditGroup(group: UserGroupRow): void {
+  groupForm.value = {
+    id: group.id,
+    name: group.name,
+    color: group.color,
+    position: group.position,
+  }
+  groupDialogOpen.value = true
+}
+
+async function saveGroup(): Promise<void> {
+  const payload = {
+    name: groupForm.value.name.trim(),
+    color: groupForm.value.color,
+    position: Number(groupForm.value.position) || 0,
+  }
+  try {
+    if (groupForm.value.id) await http.patch(`/admin/groups/${groupForm.value.id}`, payload)
+    else await http.post('/admin/groups', payload)
+    groupDialogOpen.value = false
+    await loadAll()
+  } catch (err) {
+    error.value = errMessage(err)
+  }
+}
+
+async function confirmDeleteGroup(): Promise<void> {
+  const group = groupDeleting.value
+  groupDeleting.value = null
+  if (!group) return
+  try {
+    await http.del(`/admin/groups/${group.id}`)
+    await loadAll()
+  } catch (err) {
+    error.value = errMessage(err)
+  }
+}
+
+async function assignGroup(user: UserRowWithCount, value: string): Promise<void> {
+  const groupId = value === '' ? null : Number(value)
+  try {
+    await http.patch(`/admin/users/${user.id}`, { groupId })
+    user.groupId = groupId
+    await loadAll()
+  } catch (err) {
+    error.value = errMessage(err)
+  }
+}
+
+// A `<select>` change hands back an Event; Vue templates are plain JS, so the
+// target is unwrapped here rather than with a cast in the template.
+const onGroupChange = (user: UserRowWithCount, event: Event): void => {
+  void assignGroup(user, (event.target as HTMLSelectElement).value)
+}
+const onGroupDialogChange = (value: boolean): void => {
+  groupDialogOpen.value = value
+}
+const onGroupDeleteChange = (value: boolean): void => {
+  if (!value) groupDeleting.value = null
+}
+
+// ------------------------------------------------------------- 站点文本
+
+async function saveSiteSettings(): Promise<void> {
+  settingsNotice.value = ''
+  settingsError.value = ''
+  savingSettings.value = true
+  try {
+    const saved = await http.patch<SettingsResponse>('/admin/settings', settings.value)
+    settings.value = saved
+    // Push the change into the shared store so the header, home page and footer
+    // update without a reload.
+    setup.siteName = saved.siteName
+    setup.siteDescription = saved.siteDescription
+    setup.siteNotice = saved.siteNotice
+    setup.siteFooter = saved.siteFooter
+    settingsNotice.value = '站点文本已保存'
+  } catch (err) {
+    settingsError.value = errMessage(err)
+  } finally {
+    savingSettings.value = false
+  }
+}
+
+// ------------------------------------------------------------- 举报理由
+
+async function createReason(): Promise<void> {
+  const label = newReason.value.trim()
+  if (!label) return
+  try {
+    await http.post('/admin/report-reasons', { label, position: reportReasons.value.length })
+    newReason.value = ''
+    await loadAll()
+  } catch (err) {
+    error.value = errMessage(err)
+  }
+}
+
+async function deleteReason(reason: ReportReasonRow): Promise<void> {
+  try {
+    await http.del(`/admin/report-reasons/${reason.id}`)
+    reportReasons.value = reportReasons.value.filter((r) => r.id !== reason.id)
+  } catch (err) {
+    error.value = errMessage(err)
+  }
+}
+
 // ----------------------------------------------------------------- reports
 
 async function resolveReport(report: ReportRow, action: 'accept' | 'reject'): Promise<void> {
@@ -269,6 +436,38 @@ async function toggleRole(user: UserRowWithCount): Promise<void> {
   }
 }
 
+function openEditUser(user: UserRowWithCount): void {
+  userEditing.value = user
+  userForm.value = { displayName: user.displayName, bio: user.bio, avatarUrl: user.avatarUrl }
+}
+
+/** Admins can fix a member's public profile; the row is updated in place. */
+async function saveUser(): Promise<void> {
+  const target = userEditing.value
+  if (!target) return
+  const patch = {
+    displayName: userForm.value.displayName.trim(),
+    bio: userForm.value.bio.trim(),
+    avatarUrl: userForm.value.avatarUrl.trim(),
+  }
+  userSaving.value = true
+  try {
+    await http.patch(`/admin/users/${target.id}`, patch)
+    target.displayName = patch.displayName
+    target.bio = patch.bio
+    target.avatarUrl = patch.avatarUrl
+    userEditing.value = null
+  } catch (err) {
+    error.value = errMessage(err)
+  } finally {
+    userSaving.value = false
+  }
+}
+
+const onUserDialogChange = (value: boolean): void => {
+  if (!value) userEditing.value = null
+}
+
 // ------------------------------------------------------------------ threads
 
 async function setThreadFlag(
@@ -336,10 +535,12 @@ const parentName = (cat: CategoryRow): string =>
         <TabsTrigger class="tabs-trigger" value="users">用户</TabsTrigger>
         <TabsTrigger class="tabs-trigger" value="threads">主题</TabsTrigger>
         <TabsTrigger class="tabs-trigger" value="tags">标签</TabsTrigger>
+        <TabsTrigger class="tabs-trigger" value="groups">用户组</TabsTrigger>
         <TabsTrigger class="tabs-trigger" value="reports">
           举报{{ openReportCount ? ' (' + openReportCount + ')' : '' }}
         </TabsTrigger>
         <TabsTrigger class="tabs-trigger" value="mail">邮件</TabsTrigger>
+        <TabsTrigger class="tabs-trigger" value="site">站点</TabsTrigger>
       </TabsList>
 
       <TabsContent value="categories">
@@ -395,73 +596,77 @@ const parentName = (cat: CategoryRow): string =>
 
         <div v-if="!users.length" class="empty">还没有用户。</div>
 
-        <div v-else class="card" style="overflow: hidden">
-          <table class="table">
-            <thead>
-              <tr>
-                <th>用户</th>
-                <th>角色</th>
-                <th>状态</th>
-                <th>信用分</th>
-                <th>回复</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="user in users" :key="user.id">
-                <td>
-                  <div style="display: flex; align-items: center; gap: 10px">
-                    <UserAvatar :user="user" :size="26" />
-                    <router-link :to="`/u/${user.username}`">
-                      <b>{{ user.displayName }}</b>
-                    </router-link>
-                    <span class="faint" style="font-size: 13px">@{{ user.username }}</span>
-                  </div>
-                </td>
-                <td>
-                  <span :class="user.role === 'admin' ? 'pill pill-accent' : 'pill'">
-                    {{ user.role === 'admin' ? '管理员' : '用户' }}
-                  </span>
-                </td>
-                <td>
-                  <span :class="user.banned ? 'pill pill-danger' : 'pill'">
-                    {{ user.banned ? '已封禁' : '正常' }}
-                  </span>
-                  <div v-if="user.banned" class="faint" style="font-size: 12px; margin-top: 4px">
-                    {{ user.banReason || '—' }}
-                    {{ user.bannedUntil ? `· 至 ${time(user.bannedUntil)}` : '· 永久' }}
-                  </div>
-                </td>
-                <td class="mono">{{ user.credit }}</td>
-                <td class="mono">{{ user.postCount }}</td>
-                <td>
-                  <div class="row-actions">
-                    <button class="btn btn-ghost btn-sm" type="button" @click="toggleRole(user)">
-                      {{ user.role === 'admin' ? '降为用户' : '设为管理员' }}
-                    </button>
-                    <button class="btn btn-sm" type="button" @click="adjustCredit(user, -10)">
-                      信用 -10
-                    </button>
-                    <button class="btn btn-sm" type="button" @click="adjustCredit(user, 10)">
-                      信用 +10
-                    </button>
-                    <button v-if="user.banned" class="btn btn-sm" type="button" @click="unban(user)">
-                      解封
-                    </button>
-                    <button
-                      v-else
-                      class="btn btn-danger btn-sm"
-                      type="button"
-                      :disabled="user.id === auth.user?.id"
-                      @click="openBan(user)"
-                    >
-                      封禁
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+        <div v-else class="user-list">
+          <div v-for="user in users" :key="user.id" class="card user-row">
+            <UserAvatar :user="user" :size="40" />
+
+            <div class="user-main">
+              <div class="user-title">
+                <router-link :to="`/u/${user.username}`">
+                  <b>{{ user.displayName }}</b>
+                </router-link>
+                <span v-if="user.id < 0" class="pill pill-accent">系统</span>
+                <span v-else-if="user.role === 'admin'" class="pill pill-accent">管理员</span>
+                <span v-if="user.banned" class="pill pill-danger">已封禁</span>
+                <span class="faint" style="font-size: 13px">@{{ user.username }}</span>
+              </div>
+
+              <div class="user-meta">
+                <span>信用分 <b class="mono">{{ user.credit }}</b></span>
+                <span>回复 <b class="mono">{{ user.postCount }}</b></span>
+                <label v-if="user.id > 0" class="user-group-field">
+                  用户组
+                  <select
+                    class="group-select"
+                    :value="user.groupId ?? ''"
+                    @change="onGroupChange(user, $event)"
+                  >
+                    <option value="">无</option>
+                    <option v-for="group in groups" :key="group.id" :value="group.id">
+                      {{ group.name }}
+                    </option>
+                  </select>
+                </label>
+                <span v-else class="faint">系统账号</span>
+                <span v-if="user.banned && user.banReason" class="faint">
+                  {{ user.banReason
+                  }}{{ user.bannedUntil ? ` · 至 ${time(user.bannedUntil)}` : ' · 永久' }}
+                </span>
+              </div>
+            </div>
+
+            <div class="user-actions">
+              <button class="btn btn-sm" type="button" @click="openEditUser(user)">编辑资料</button>
+              <template v-if="user.id > 0">
+                <button
+                  class="btn btn-sm"
+                  type="button"
+                  :disabled="user.id === auth.user?.id"
+                  @click="toggleRole(user)"
+                >
+                  {{ user.role === 'admin' ? '降为用户' : '设为管理员' }}
+                </button>
+                <button class="btn btn-sm" type="button" @click="adjustCredit(user, -10)">
+                  信用 -10
+                </button>
+                <button class="btn btn-sm" type="button" @click="adjustCredit(user, 10)">
+                  信用 +10
+                </button>
+                <button v-if="user.banned" class="btn btn-sm" type="button" @click="unban(user)">
+                  解封
+                </button>
+                <button
+                  v-else
+                  class="btn btn-danger btn-sm"
+                  type="button"
+                  :disabled="user.id === auth.user?.id"
+                  @click="openBan(user)"
+                >
+                  封禁
+                </button>
+              </template>
+            </div>
+          </div>
         </div>
       </TabsContent>
 
@@ -598,7 +803,86 @@ const parentName = (cat: CategoryRow): string =>
         </div>
       </TabsContent>
 
+      <TabsContent value="groups">
+        <div class="toolbar">
+          <span class="muted" style="font-size: 14px">{{ groups.length }} 个用户组</span>
+          <span class="spacer"></span>
+          <button class="btn btn-primary btn-sm" type="button" @click="openCreateGroup">
+            新建用户组
+          </button>
+        </div>
+
+        <div v-if="!groups.length" class="empty">还没有用户组，先创建一个。</div>
+
+        <div v-else class="card" style="overflow: hidden">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>名称</th>
+                <th>颜色</th>
+                <th>成员</th>
+                <th>排序</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="group in groups" :key="group.id">
+                <td>
+                  <span class="group-badge" :style="{ color: group.color, borderColor: group.color }">
+                    {{ group.name }}
+                  </span>
+                </td>
+                <td class="mono faint">{{ group.color }}</td>
+                <td class="mono">{{ group.memberCount ?? 0 }}</td>
+                <td class="mono faint">{{ group.position }}</td>
+                <td>
+                  <div class="row-actions">
+                    <button class="btn btn-ghost btn-sm" type="button" @click="openEditGroup(group)">
+                      编辑
+                    </button>
+                    <button
+                      class="btn btn-danger btn-sm"
+                      type="button"
+                      @click="groupDeleting = group"
+                    >
+                      删除
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </TabsContent>
+
       <TabsContent value="reports">
+        <div class="card card-pad" style="margin-bottom: 18px">
+          <div class="toolbar" style="margin-bottom: 10px">
+            <h3>举报理由</h3>
+            <span class="spacer"></span>
+            <form class="tag-create" @submit.prevent="createReason">
+              <input v-model="newReason" type="text" maxlength="30" placeholder="新增理由" />
+              <button class="btn btn-primary btn-sm" type="submit">添加</button>
+            </form>
+          </div>
+          <div v-if="!reportReasons.length" class="faint" style="font-size: 13px">
+            还没有举报理由，举报对话框将无法提交。
+          </div>
+          <div v-else class="reason-list">
+            <span v-for="reason in reportReasons" :key="reason.id" class="reason-chip">
+              {{ reason.label }}
+              <button
+                class="reason-del"
+                type="button"
+                :aria-label="`删除 ${reason.label}`"
+                @click="deleteReason(reason)"
+              >
+                ×
+              </button>
+            </span>
+          </div>
+        </div>
+
         <div class="toolbar">
           <div class="md-tabs">
             <button
@@ -722,6 +1006,52 @@ const parentName = (cat: CategoryRow): string =>
         </div>
       </TabsContent>
 
+      <TabsContent value="site">
+        <div class="card card-pad" style="max-width: 640px">
+          <h3>站点文本</h3>
+          <p class="muted" style="margin: 8px 0 16px; font-size: 14px">
+            名称显示在页眉，简介与公告显示在首页，页脚显示在每一页底部。
+          </p>
+
+          <p v-if="settingsNotice" class="form-ok">{{ settingsNotice }}</p>
+          <p v-if="settingsError" class="form-error">{{ settingsError }}</p>
+
+          <form @submit.prevent="saveSiteSettings">
+            <label class="field">
+              <span>站点名称</span>
+              <input v-model="settings.siteName" type="text" maxlength="50" required />
+            </label>
+            <label class="field">
+              <span>站点简介</span>
+              <textarea v-model="settings.siteDescription" rows="2" maxlength="200"></textarea>
+            </label>
+            <label class="field">
+              <span>首页公告</span>
+              <textarea
+                v-model="settings.siteNotice"
+                rows="4"
+                maxlength="2000"
+                placeholder="留空则不显示，支持 Markdown"
+              ></textarea>
+            </label>
+            <label class="field">
+              <span>页脚文本</span>
+              <input
+                v-model="settings.siteFooter"
+                type="text"
+                maxlength="500"
+                placeholder="留空则不显示"
+              />
+            </label>
+            <div style="display: flex; justify-content: flex-end">
+              <button class="btn btn-primary" type="submit" :disabled="savingSettings">
+                {{ savingSettings ? '保存中…' : '保存' }}
+              </button>
+            </div>
+          </form>
+        </div>
+      </TabsContent>
+
     </TabsRoot>
 
     <!-- create / edit a category -->
@@ -804,6 +1134,94 @@ const parentName = (cat: CategoryRow): string =>
               确定删除
             </button>
           </div>
+        </DialogContent>
+      </DialogPortal>
+    </DialogRoot>
+
+    <!-- create / edit a user group -->
+    <DialogRoot :open="groupDialogOpen" @update:open="onGroupDialogChange">
+      <DialogPortal>
+        <DialogOverlay class="dialog-overlay" />
+        <DialogContent class="dialog-content">
+          <DialogTitle class="dialog-title">
+            {{ groupForm.id ? '编辑用户组' : '新建用户组' }}
+          </DialogTitle>
+          <DialogDescription class="dialog-desc">
+            用户组决定成员名旁的徽章名称与颜色，不涉及权限。
+          </DialogDescription>
+          <form @submit.prevent="saveGroup">
+            <label class="field">
+              <span>名称</span>
+              <input v-model="groupForm.name" type="text" maxlength="20" required />
+            </label>
+            <label class="field">
+              <span>颜色</span>
+              <input v-model="groupForm.color" type="color" />
+            </label>
+            <label class="field">
+              <span>排序</span>
+              <input v-model.number="groupForm.position" type="number" min="0" />
+            </label>
+            <div class="dialog-actions">
+              <button class="btn" type="button" @click="groupDialogOpen = false">取消</button>
+              <button class="btn btn-primary" type="submit">保存</button>
+            </div>
+          </form>
+        </DialogContent>
+      </DialogPortal>
+    </DialogRoot>
+
+    <!-- delete a user group -->
+    <DialogRoot :open="groupDeleting !== null" @update:open="onGroupDeleteChange">
+      <DialogPortal>
+        <DialogOverlay class="dialog-overlay" />
+        <DialogContent class="dialog-content">
+          <DialogTitle class="dialog-title">删除用户组</DialogTitle>
+          <DialogDescription class="dialog-desc">
+            将删除「{{ groupDeleting?.name }}」，其成员会变为无用户组，用户本身不受影响。
+          </DialogDescription>
+          <div class="dialog-actions">
+            <button class="btn" type="button" @click="groupDeleting = null">取消</button>
+            <button class="btn btn-danger" type="button" @click="confirmDeleteGroup">确定删除</button>
+          </div>
+        </DialogContent>
+      </DialogPortal>
+    </DialogRoot>
+
+    <!-- edit a member's public profile -->
+    <DialogRoot :open="userEditing !== null" @update:open="onUserDialogChange">
+      <DialogPortal>
+        <DialogOverlay class="dialog-overlay" />
+        <DialogContent class="dialog-content">
+          <DialogTitle class="dialog-title">编辑用户资料</DialogTitle>
+          <DialogDescription class="dialog-desc">
+            修改「{{ userEditing?.displayName }}」的昵称、简介与头像，用户名不可更改。
+          </DialogDescription>
+          <form @submit.prevent="saveUser">
+            <label class="field">
+              <span>昵称</span>
+              <input v-model="userForm.displayName" type="text" maxlength="32" required />
+            </label>
+            <label class="field">
+              <span>简介</span>
+              <textarea v-model="userForm.bio" rows="3" maxlength="500"></textarea>
+            </label>
+            <label class="field">
+              <span>头像地址</span>
+              <input
+                v-model="userForm.avatarUrl"
+                type="text"
+                maxlength="512"
+                placeholder="https://… 或 /uploads/…"
+              />
+            </label>
+            <div class="dialog-actions">
+              <button class="btn" type="button" @click="userEditing = null">取消</button>
+              <button class="btn btn-primary" type="submit" :disabled="userSaving">
+                {{ userSaving ? '保存中…' : '保存' }}
+              </button>
+            </div>
+          </form>
         </DialogContent>
       </DialogPortal>
     </DialogRoot>

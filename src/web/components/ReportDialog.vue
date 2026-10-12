@@ -9,6 +9,8 @@ import {
 } from 'reka-ui'
 import { ref, watch } from 'vue'
 import { errMessage, http } from '../api'
+import type { ReportReasonsResponse } from '../api'
+import type { ReportReasonRow } from '../../shared/types'
 
 const props = defineProps<{
   open: boolean
@@ -18,17 +20,24 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ close: []; submitted: [] }>()
 
+const reasons = ref<ReportReasonRow[]>([])
 const reason = ref('')
 const error = ref('')
 const submitting = ref(false)
 
 // Reset each time the dialog opens, so a cancelled report leaves nothing behind.
+// The reason list is fetched here rather than cached globally: it is tiny and
+// admins can change it at any moment.
 watch(
   () => props.open,
-  (open) => {
-    if (open) {
-      reason.value = ''
-      error.value = ''
+  async (open) => {
+    if (!open) return
+    reason.value = ''
+    error.value = ''
+    try {
+      reasons.value = await http.get<ReportReasonsResponse>('/report-reasons')
+    } catch {
+      reasons.value = []
     }
   },
 )
@@ -40,7 +49,7 @@ async function submit(): Promise<void> {
     await http.post('/reports', {
       targetType: props.targetType,
       targetId: props.targetId,
-      reason: reason.value.trim(),
+      reason: reason.value,
     })
     emit('submitted')
     emit('close')
@@ -63,19 +72,22 @@ function onOpenChange(value: boolean): void {
       <DialogContent class="dialog-content">
         <DialogTitle class="dialog-title">举报</DialogTitle>
         <DialogDescription class="dialog-desc">
-          {{ targetLabel ? `举报「${targetLabel}」` : '请说明举报理由，管理员会尽快处理。' }}
+          {{ targetLabel ? `举报「${targetLabel}」` : '请选择举报理由，管理员会尽快处理。' }}
         </DialogDescription>
 
         <p v-if="error" class="form-error">{{ error }}</p>
 
         <label class="field">
           <span>理由</span>
-          <textarea
-            v-model="reason"
-            rows="3"
-            maxlength="300"
-            placeholder="这条内容哪里有问题？"
-          ></textarea>
+          <select v-model="reason" :disabled="!reasons.length">
+            <option value="" disabled>请选择举报理由</option>
+            <option v-for="item in reasons" :key="item.id" :value="item.label">
+              {{ item.label }}
+            </option>
+          </select>
+          <span v-if="!reasons.length" class="faint" style="font-size: 12px">
+            管理员尚未配置举报理由。
+          </span>
         </label>
 
         <div class="dialog-actions">
@@ -83,7 +95,7 @@ function onOpenChange(value: boolean): void {
           <button
             class="btn btn-primary"
             type="button"
-            :disabled="!reason.trim() || submitting"
+            :disabled="!reason || submitting"
             @click="submit"
           >
             {{ submitting ? '提交中…' : '提交举报' }}

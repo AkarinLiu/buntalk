@@ -11,15 +11,20 @@
  * a runtime SQL error rather than a compile error — the domain types in
  * `types.ts` are what keeps callers honest.
  */
-import { and, asc, count, desc, eq, inArray, like, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, gt, inArray, like, sql } from 'drizzle-orm'
 import { db, dialect, tables as t } from './index'
-import { toPublicUser } from '../shared/types'
+import { SYSTEM_USER_ID, SYSTEM_USERNAME, toPublicUser } from '../shared/types'
 import type {
   AdminUser,
   CategoryRow,
+  DmMessageRow,
+  DmThreadRow,
+  DmUser,
+  DraftRow,
   EmailTokenKind,
   EmailTokenRow,
   PostRow,
+  ReportReasonRow,
   ReportRow,
   ReportStatus,
   ReportTarget,
@@ -29,6 +34,7 @@ import type {
   TagRow,
   ThreadRow,
   UserAuthRow,
+  UserGroupRow,
 } from '../shared/types'
 
 /** Shown until the setup wizard (or an admin) writes a real name. */
@@ -95,9 +101,51 @@ export async function findVerifiedUserByEmail(email: string): Promise<UserAuthRo
   return (rows[0] as UserAuthRow) ?? null
 }
 
+/**
+ * Real accounts only. The system user (id < 0) is deliberately excluded, or it
+ * would count as "the first user" and close the setup wizard / steal the admin
+ * role on a fresh install.
+ */
 export async function countUsers(): Promise<number> {
-  const rows: any[] = await db.select({ n: count() }).from(t.users)
+  const rows: any[] = await db.select({ n: count() }).from(t.users).where(gt(t.users.id, 0))
   return Number(rows[0]?.n ?? 0)
+}
+
+/**
+ * Creates the reserved system account once. It has no usable password (and the
+ * session layer ignores id <= 0), so it can hold content but never log in.
+ */
+export async function ensureSystemUser(): Promise<void> {
+  const found = await findUserById(SYSTEM_USER_ID)
+  if (found) return
+  await db.insert(t.users).values({
+    id: SYSTEM_USER_ID,
+    username: SYSTEM_USERNAME,
+    displayName: '系统',
+    // Empty hash: /auth/login falls back to the dummy verify, so no password
+    // can ever match.
+    passwordHash: '',
+    bio: '',
+    avatarUrl: '',
+    role: 'user',
+    groupId: null,
+    banned: false,
+    credit: 0,
+    banReason: '',
+    bannedUntil: null,
+    email: '',
+    emailVerified: false,
+    sessionVersion: 0,
+    createdAt: nowISO(),
+  })
+  // Some engines claim not to support negative ids in an AUTO_INCREMENT column;
+  // fail loudly at boot rather than silently missing the account every feature
+  // that references it depends on.
+  if (!(await findUserById(SYSTEM_USER_ID))) {
+    throw new Error(
+      `[buntalk] could not create the system user (id ${SYSTEM_USER_ID}); this database does not allow negative ids`,
+    )
+  }
 }
 
 export async function createUser(input: {
@@ -111,6 +159,7 @@ export async function createUser(input: {
 }): Promise<number> {
   return insertReturningId(t.users, {
     ...input,
+    groupId: null,
     banned: false,
     credit: CREDIT_START,
     banReason: '',
@@ -193,6 +242,11 @@ export async function applyCredit(
   return { credit, banned: user.banned }
 }
 
+/**
+ * Every account, the system user (id < 0) included, so an operator can see and
+ * label it. `countUsers` deliberately still excludes it — it must not count as
+ * "the first user" — but the admin table wants the whole picture.
+ */
 export async function listUsers(): Promise<AdminUser[]> {
   const rows: any[] = await db.select().from(t.users).orderBy(asc(t.users.id))
   const counts = await groupCounts(t.posts, t.posts.authorId)
@@ -206,6 +260,64 @@ export async function listUsers(): Promise<AdminUser[]> {
     banReason: r.banReason ?? '',
     bannedUntil: r.bannedUntil ?? null,
   }))
+}
+
+// --------------------------------------------------------------- groups
+
+export async function listGroups(): Promise<UserGroupRow[]> {
+  const rows: any[] = await db
+    .select()
+    .from(t.userGroups)
+    .orderBy(asc(t.userGroups.position), asc(t.userGroups.id))
+  const counts = await groupCounts(t.users, t.users.groupId)
+  return rows.map((r: any) => ({
+    id: Number(r.id),
+    name: r.name,
+    color: r.color,
+    position: Number(r.position),
+    memberCount: counts.get(Number(r.id)) ?? 0,
+  }))
+}
+
+export async function findGroup(id: number): Promise<UserGroupRow | null> {
+  const rows: any[] = await db.select().from(t.userGroups).where(eq(t.userGroups.id, id)).limit(1)
+  if (!rows[0]) return null
+  return {
+    id: Number(rows[0].id),
+    name: rows[0].name,
+    color: rows[0].color,
+    position: Number(rows[0].position),
+  }
+}
+
+export async function createGroup(input: {
+  name: string
+  color: string
+  position: number
+}): Promise<number> {
+  return insertReturningId(t.userGroups, input)
+}
+
+export async function updateGroup(
+  id: number,
+  patch: { name: string; color: string; position: number },
+): Promise<void> {
+  await db.update(t.userGroups).set(patch).where(eq(t.userGroups.id, id))
+}
+
+/**
+ * Deletes a group and detaches its members first. The membership column is a
+ * plain nullable int rather than a FK here because SQLite cannot add a foreign
+ * key to an existing table, so this clear is what keeps members consistent on
+ * every dialect.
+ */
+export async function deleteGroup(id: number): Promise<void> {
+  await db.update(t.users).set({ groupId: null }).where(eq(t.users.groupId, id))
+  await db.delete(t.userGroups).where(eq(t.userGroups.id, id))
+}
+
+export async function setUserGroup(id: number, groupId: number | null): Promise<void> {
+  await db.update(t.users).set({ groupId }).where(eq(t.users.id, id))
 }
 
 // ----------------------------------------------------------- categories
@@ -290,6 +402,8 @@ export async function getSettings(): Promise<SettingsRow> {
   return {
     siteName: rows[0]?.siteName || DEFAULT_SITE_NAME,
     siteDescription: rows[0]?.siteDescription ?? '',
+    siteNotice: rows[0]?.siteNotice ?? '',
+    siteFooter: rows[0]?.siteFooter ?? '',
   }
 }
 
@@ -577,6 +691,70 @@ export async function deleteThread(id: number): Promise<void> {
   await db.delete(t.threads).where(eq(t.threads.id, id))
 }
 
+// --------------------------------------------------------------- drafts
+
+function hydrateDraft(r: any): DraftRow {
+  return {
+    id: Number(r.id),
+    authorId: Number(r.authorId),
+    categoryId: r.categoryId == null ? null : Number(r.categoryId),
+    title: r.title,
+    body: r.body,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+    categoryName: r.categoryName ?? undefined,
+  }
+}
+
+/** The author's drafts, newest edit first, with the board name for the list. */
+export async function listDrafts(authorId: number): Promise<DraftRow[]> {
+  const rows: any[] = await db
+    .select({
+      id: t.drafts.id,
+      authorId: t.drafts.authorId,
+      categoryId: t.drafts.categoryId,
+      title: t.drafts.title,
+      body: t.drafts.body,
+      createdAt: t.drafts.createdAt,
+      updatedAt: t.drafts.updatedAt,
+      categoryName: t.categories.name,
+    })
+    .from(t.drafts)
+    .leftJoin(t.categories, eq(t.drafts.categoryId, t.categories.id))
+    .where(eq(t.drafts.authorId, authorId))
+    .orderBy(desc(t.drafts.updatedAt))
+  return rows.map(hydrateDraft)
+}
+
+export async function findDraft(id: number): Promise<DraftRow | null> {
+  const rows: any[] = await db.select().from(t.drafts).where(eq(t.drafts.id, id)).limit(1)
+  return rows[0] ? hydrateDraft(rows[0]) : null
+}
+
+export async function createDraft(input: {
+  authorId: number
+  categoryId: number | null
+  title: string
+  body: string
+}): Promise<number> {
+  const now = nowISO()
+  return insertReturningId(t.drafts, { ...input, createdAt: now, updatedAt: now })
+}
+
+export async function updateDraft(
+  id: number,
+  patch: { categoryId: number | null; title: string; body: string },
+): Promise<void> {
+  await db
+    .update(t.drafts)
+    .set({ ...patch, updatedAt: nowISO() })
+    .where(eq(t.drafts.id, id))
+}
+
+export async function deleteDraft(id: number): Promise<void> {
+  await db.delete(t.drafts).where(eq(t.drafts.id, id))
+}
+
 // ---------------------------------------------------------------- posts
 
 const postWithAuthor = {
@@ -590,6 +768,7 @@ const postWithAuthor = {
   authorDisplayName: t.users.displayName,
   authorAvatarUrl: t.users.avatarUrl,
   authorRole: t.users.role,
+  authorGroupId: t.users.groupId,
 }
 
 function hydratePost(r: any, likeCount: number, liked: boolean): PostRow {
@@ -606,6 +785,7 @@ function hydratePost(r: any, likeCount: number, liked: boolean): PostRow {
       displayName: r.authorDisplayName ?? '',
       avatarUrl: r.authorAvatarUrl ?? '',
       role: r.authorRole ?? 'user',
+      groupId: r.authorGroupId ?? null,
     },
     likeCount,
     likedByMe: liked,
@@ -709,6 +889,68 @@ export async function authorStats(userId: number): Promise<{ threadCount: number
     threadCount: await countWhere(t.threads, t.threads.authorId, userId),
     postCount: await countWhere(t.posts, t.posts.authorId, userId),
   }
+}
+
+// ------------------------------------------------------- report reasons
+
+/** Reasons offered in the report dialog, in admin-defined order. */
+export async function listReportReasons(): Promise<ReportReasonRow[]> {
+  const rows: any[] = await db
+    .select()
+    .from(t.reportReasons)
+    .orderBy(asc(t.reportReasons.position), asc(t.reportReasons.id))
+  return rows.map((r: any) => ({
+    id: Number(r.id),
+    label: r.label,
+    position: Number(r.position),
+  }))
+}
+
+export async function findReportReason(id: number): Promise<ReportReasonRow | null> {
+  const rows: any[] = await db
+    .select()
+    .from(t.reportReasons)
+    .where(eq(t.reportReasons.id, id))
+    .limit(1)
+  return rows[0]
+    ? { id: Number(rows[0].id), label: rows[0].label, position: Number(rows[0].position) }
+    : null
+}
+
+export async function createReportReason(label: string, position: number): Promise<number> {
+  return insertReturningId(t.reportReasons, { label, position })
+}
+
+export async function updateReportReason(
+  id: number,
+  patch: { label: string; position: number },
+): Promise<void> {
+  await db.update(t.reportReasons).set(patch).where(eq(t.reportReasons.id, id))
+}
+
+export async function deleteReportReason(id: number): Promise<void> {
+  await db.delete(t.reportReasons).where(eq(t.reportReasons.id, id))
+}
+
+/** What a fresh install ships with — the "新增一些举报理由" starting set. */
+const DEFAULT_REPORT_REASONS = [
+  '广告或垃圾信息',
+  '人身攻击或辱骂',
+  '色情低俗',
+  '违法违规信息',
+  '政治敏感',
+  '侵犯版权',
+  '与主题无关',
+  '其他',
+]
+
+/** Seeds the defaults once, so reporting works before an admin edits the list. */
+export async function ensureReportReasons(): Promise<void> {
+  const rows: any[] = await db.select({ n: count() }).from(t.reportReasons)
+  if (Number(rows[0]?.n ?? 0) > 0) return
+  await db.insert(t.reportReasons).values(
+    DEFAULT_REPORT_REASONS.map((label, position) => ({ label, position })),
+  )
 }
 
 // -------------------------------------------------------------- reports
@@ -856,4 +1098,215 @@ export async function listReports(status?: ReportStatus): Promise<ReportRow[]> {
       targetThreadId,
     }
   })
+}
+
+// ------------------------------------------------------- private messages
+
+/** Columns needed to render a participant's name and badge. */
+const dmUser = {
+  id: t.users.id,
+  username: t.users.username,
+  displayName: t.users.displayName,
+  avatarUrl: t.users.avatarUrl,
+  groupId: t.users.groupId,
+}
+
+/** Members of a set of conversations, keyed by thread id — one query per page. */
+async function dmParticipantsFor(threadIds: number[]): Promise<Map<number, DmUser[]>> {
+  const map = new Map<number, DmUser[]>()
+  if (!threadIds.length) return map
+  const rows: any[] = await db
+    .select({ threadId: t.dmParticipants.threadId, ...dmUser })
+    .from(t.dmParticipants)
+    .innerJoin(t.users, eq(t.dmParticipants.userId, t.users.id))
+    .where(inArray(t.dmParticipants.threadId, threadIds))
+  for (const r of rows) {
+    const key = Number(r.threadId)
+    const list = map.get(key) ?? []
+    list.push({
+      id: Number(r.id),
+      username: r.username,
+      displayName: r.displayName,
+      avatarUrl: r.avatarUrl,
+      groupId: r.groupId ?? null,
+    })
+    map.set(key, list)
+  }
+  return map
+}
+
+export async function listDmParticipants(threadId: number): Promise<DmUser[]> {
+  return (await dmParticipantsFor([threadId])).get(threadId) ?? []
+}
+
+function hydrateDmThread(r: any): DmThreadRow {
+  return {
+    id: Number(r.id),
+    title: r.title,
+    creatorId: Number(r.creatorId),
+    createdAt: r.createdAt,
+    lastMessageAt: r.lastMessageAt,
+  }
+}
+
+/** Creates the conversation, its members and its opening message together. */
+export async function createDmThread(input: {
+  creatorId: number
+  title: string
+  participantIds: number[]
+  body: string
+}): Promise<number> {
+  const now = nowISO()
+  const threadId = await insertReturningId(t.dmThreads, {
+    title: input.title,
+    creatorId: input.creatorId,
+    createdAt: now,
+    lastMessageAt: now,
+  })
+  const memberIds = [...new Set([input.creatorId, ...input.participantIds])]
+  await db.insert(t.dmParticipants).values(
+    memberIds.map((userId) => ({
+      threadId,
+      userId,
+      // The creator has read their own opening message; everyone else has not.
+      lastReadAt: userId === input.creatorId ? now : null,
+    })),
+  )
+  await insertReturningId(t.dmMessages, {
+    threadId,
+    authorId: input.creatorId,
+    body: input.body,
+    createdAt: now,
+  })
+  return threadId
+}
+
+export async function findDmThread(id: number): Promise<DmThreadRow | null> {
+  const rows: any[] = await db.select().from(t.dmThreads).where(eq(t.dmThreads.id, id)).limit(1)
+  return rows[0] ? hydrateDmThread(rows[0]) : null
+}
+
+export async function isDmParticipant(threadId: number, userId: number): Promise<boolean> {
+  const rows: any[] = await db
+    .select({ threadId: t.dmParticipants.threadId })
+    .from(t.dmParticipants)
+    .where(and(eq(t.dmParticipants.threadId, threadId), eq(t.dmParticipants.userId, userId)))
+    .limit(1)
+  return rows.length > 0
+}
+
+/**
+ * The viewer's conversations, newest first, each with its members, latest
+ * message and unread count.
+ *
+ * ponytail: all messages of the viewer's threads are loaded to derive the last
+ * message and unread count in one pass. That is fine for a self-hosted inbox;
+ * swap in a per-thread last-message query plus a `COUNT` against the read
+ * watermark if a single account ever accumulates tens of thousands of messages.
+ */
+export async function listDmThreads(userId: number): Promise<DmThreadRow[]> {
+  const mine: any[] = await db
+    .select()
+    .from(t.dmParticipants)
+    .where(eq(t.dmParticipants.userId, userId))
+  const ids = mine.map((r: any) => Number(r.threadId))
+  if (!ids.length) return []
+
+  const threadRows: any[] = await db
+    .select()
+    .from(t.dmThreads)
+    .where(inArray(t.dmThreads.id, ids))
+    .orderBy(desc(t.dmThreads.lastMessageAt))
+  const participants = await dmParticipantsFor(ids)
+  const messages: any[] = await db
+    .select()
+    .from(t.dmMessages)
+    .where(inArray(t.dmMessages.threadId, ids))
+    .orderBy(desc(t.dmMessages.createdAt), desc(t.dmMessages.id))
+
+  const lastRead = new Map<number, string>(
+    mine.map((r: any) => [Number(r.threadId), r.lastReadAt ?? '']),
+  )
+  const lastMessage = new Map<number, any>()
+  const unread = new Map<number, number>()
+  const messageCount = new Map<number, number>()
+  for (const m of messages) {
+    const tid = Number(m.threadId)
+    // Ordered newest first, so the first hit per thread is its latest message.
+    if (!lastMessage.has(tid)) lastMessage.set(tid, m)
+    messageCount.set(tid, (messageCount.get(tid) ?? 0) + 1)
+    if (Number(m.authorId) !== userId && m.createdAt > (lastRead.get(tid) ?? '')) {
+      unread.set(tid, (unread.get(tid) ?? 0) + 1)
+    }
+  }
+
+  return threadRows.map((r: any) => {
+    const tid = Number(r.id)
+    const last = lastMessage.get(tid)
+    return {
+      ...hydrateDmThread(r),
+      participants: participants.get(tid) ?? [],
+      lastMessage: last
+        ? { authorId: Number(last.authorId), body: last.body, createdAt: last.createdAt }
+        : undefined,
+      unreadCount: unread.get(tid) ?? 0,
+      messageCount: messageCount.get(tid) ?? 0,
+    }
+  })
+}
+
+export async function listDmMessages(threadId: number): Promise<DmMessageRow[]> {
+  const rows: any[] = await db
+    .select({
+      id: t.dmMessages.id,
+      threadId: t.dmMessages.threadId,
+      authorId: t.dmMessages.authorId,
+      body: t.dmMessages.body,
+      createdAt: t.dmMessages.createdAt,
+      authorUsername: t.users.username,
+      authorDisplayName: t.users.displayName,
+      authorAvatarUrl: t.users.avatarUrl,
+      authorGroupId: t.users.groupId,
+    })
+    .from(t.dmMessages)
+    .leftJoin(t.users, eq(t.dmMessages.authorId, t.users.id))
+    .where(eq(t.dmMessages.threadId, threadId))
+    .orderBy(asc(t.dmMessages.createdAt), asc(t.dmMessages.id))
+  return rows.map((r: any) => ({
+    id: Number(r.id),
+    threadId: Number(r.threadId),
+    authorId: Number(r.authorId),
+    body: r.body,
+    createdAt: r.createdAt,
+    author: {
+      id: Number(r.authorId),
+      username: r.authorUsername ?? '',
+      displayName: r.authorDisplayName ?? '',
+      avatarUrl: r.authorAvatarUrl ?? '',
+      groupId: r.authorGroupId ?? null,
+    },
+  }))
+}
+
+export async function createDmMessage(input: {
+  threadId: number
+  authorId: number
+  body: string
+}): Promise<number> {
+  const now = nowISO()
+  const id = await insertReturningId(t.dmMessages, { ...input, createdAt: now })
+  await db.update(t.dmThreads).set({ lastMessageAt: now }).where(eq(t.dmThreads.id, input.threadId))
+  return id
+}
+
+/** Moves the viewer's read watermark to now, clearing their unread count. */
+export async function markDmRead(threadId: number, userId: number): Promise<void> {
+  await db
+    .update(t.dmParticipants)
+    .set({ lastReadAt: nowISO() })
+    .where(and(eq(t.dmParticipants.threadId, threadId), eq(t.dmParticipants.userId, userId)))
+}
+
+export async function deleteDmThread(id: number): Promise<void> {
+  await db.delete(t.dmThreads).where(eq(t.dmThreads.id, id))
 }

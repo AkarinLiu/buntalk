@@ -32,6 +32,12 @@ export type {
   Role,
   EmailTokenKind,
   EmailTokenRow,
+  UserGroupRow,
+  DmUser,
+  DmMessageRow,
+  DmThreadRow,
+  ReportReasonRow,
+  DraftRow,
 } from '../shared/types'
 
 function detect(url: string): Dialect {

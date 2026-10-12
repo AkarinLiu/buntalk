@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import NavBar from './components/NavBar.vue'
 import SideNav from './components/SideNav.vue'
+import { setup } from './setup'
 
 // Desktop starts with the sidebar open; phones keep it closed until the menu
 // button is tapped (it becomes an off-canvas drawer there).
@@ -22,6 +23,7 @@ const isSetup = computed(() => route.name === 'setup')
         <router-view />
       </main>
     </div>
+    <footer v-if="setup.siteFooter" class="site-footer">{{ setup.siteFooter }}</footer>
   </template>
   <router-view v-else />
 </template>

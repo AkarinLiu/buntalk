@@ -12,7 +12,7 @@
 import { Hono } from 'hono'
 import type { Context, MiddlewareHandler } from 'hono'
 import * as repo from '../db/repo'
-import { toPublicUser, toSelfUser } from '../shared/types'
+import { SYSTEM_USER_ID, toPublicUser, toSelfUser } from '../shared/types'
 import type { EmailTokenKind, Role } from '../shared/types'
 import { canManage, currentUser, emailBindingRequired, endSession, startSession } from './auth'
 import type { AppEnv } from './auth'
@@ -170,6 +170,23 @@ api.post('/auth/register', async (c) => {
     createdAt: new Date().toISOString(),
   })
 
+  // A welcome private message from the system account, when it exists. Guarded
+  // so an install that somehow lacks it still registers fine (the FK would
+  // otherwise reject author id -1), and best-effort — the account is already
+  // created, so a mail-like hiccup here must not fail the registration.
+  if (await repo.findUserById(SYSTEM_USER_ID)) {
+    try {
+      await repo.createDmThread({
+        creatorId: SYSTEM_USER_ID,
+        title: '欢迎加入',
+        participantIds: [id],
+        body: `你好，${displayName}！欢迎来到本站。这是一条来自系统用户的私信，你可以在「私信」里回复。`,
+      })
+    } catch (err) {
+      console.error('[buntalk] welcome message failed:', err)
+    }
+  }
+
   await startSession(c, id, 0)
   const user = await repo.findUserById(id)
   return c.json({ user: toSelfUser(user!) }, 201)
@@ -190,7 +207,9 @@ api.post('/auth/login', async (c) => {
     (await repo.findVerifiedUserByEmail(identifier.toLowerCase()))
   // Always run a verify, even with no such user, so a missing account and a
   // wrong password cost the same wall-clock time.
-  const hash = user?.passwordHash ?? (dummyHash ??= await Bun.password.hash('buntalk-nonexistent-user'))
+  // `||` not `??`: the system user has an empty hash, and verifying against it
+  // would throw instead of the uniform "wrong password" — so it borrows the dummy.
+  const hash = user?.passwordHash || (dummyHash ??= await Bun.password.hash('buntalk-nonexistent-user'))
   const ok = await Bun.password.verify(password, hash)
   if (!user || !ok) return fail(c, '用户名或密码错误', 401)
   if (user.banned) return fail(c, '该账号已被封禁', 403)
@@ -290,6 +309,16 @@ api.get('/threads', async (c) => {
 
 api.get('/tags', async (c) => c.json(await repo.listTags()))
 
+// --------------------------------------------------------------- groups
+
+/** Public: the badge groups members can be assigned to. Small and cacheable. */
+api.get('/groups', async (c) => c.json(await repo.listGroups()))
+
+// -------------------------------------------------------- report reasons
+
+/** Public: the preset reasons the report dialog offers. */
+api.get('/report-reasons', async (c) => c.json(await repo.listReportReasons()))
+
 api.get('/threads/:id', async (c) => {
   const id = idOf(c)
   if (!id) return fail(c, '无效的主题 ID', 404)
@@ -332,6 +361,14 @@ api.post('/threads', requireAuth, async (c) => {
   const tagIds = [...new Set(wanted.map(Number).filter((n) => valid.has(n)))].slice(0, 10)
 
   const id = await repo.createThread({ categoryId, authorId: user.id, title, body: content, tagIds })
+
+  // Publishing from the draft box consumes the draft. Best-effort: the thread
+  // already exists, so a failure here leaves a stale draft, never lost content.
+  const draftId = Number(b.draftId)
+  if (Number.isInteger(draftId) && draftId > 0) {
+    const draft = await repo.findDraft(draftId)
+    if (draft?.authorId === user.id) await repo.deleteDraft(draftId)
+  }
   return c.json({ id }, 201)
 })
 
@@ -407,7 +444,11 @@ api.post('/reports', requireAuth, async (c) => {
 
   if (targetType !== 'thread' && targetType !== 'post') return fail(c, '无效的举报对象')
   if (!Number.isInteger(targetId) || targetId <= 0) return fail(c, '无效的举报对象')
-  if (reason.length < 1 || reason.length > 300) return fail(c, '请填写 1-300 字的举报理由')
+  // The reason must be one the admin still offers — the label is stored on the
+  // report, so deleting a reason later never rewrites past reports.
+  if (!(await repo.listReportReasons()).some((r) => r.label === reason)) {
+    return fail(c, '请选择有效的举报理由')
+  }
 
   if (targetType === 'thread') {
     const thread = await repo.findThread(targetId)
@@ -590,6 +631,154 @@ api.get('/users/:username/threads', async (c) => {
   return c.json(await repo.listThreadsByAuthor(user.id, 50))
 })
 
+// ------------------------------------------------------- private messages
+
+/** `@name`, `name` both resolve; unknown names and the system account are dropped. */
+async function resolveRecipients(names: unknown, selfId: number): Promise<number[]> {
+  if (!Array.isArray(names)) return []
+  const ids = new Set<number>()
+  for (const raw of names.slice(0, 20)) {
+    const name = str(raw).trim().replace(/^@/, '')
+    if (!name) continue
+    const user = await repo.findUserByUsername(name)
+    if (user && user.id > 0 && user.id !== selfId) ids.add(user.id)
+  }
+  return [...ids]
+}
+
+/** The viewer's inbox: conversations with their members, preview and unread count. */
+api.get('/dm', requireAuth, async (c) => c.json(await repo.listDmThreads(c.get('user')!.id)))
+
+api.post('/dm/threads', requireAuth, async (c) => {
+  const user = c.get('user')!
+  const b = await readJson(c)
+  const title = str(b.title).trim()
+  const body = str(b.body).trim()
+  if (title.length < 1 || title.length > 100) return fail(c, '标题长度需为 1-100 字')
+  if (body.length < 1 || body.length > 20000) return fail(c, '内容不能为空，且不超过 20000 字')
+
+  const participantIds = await resolveRecipients(b.participants, user.id)
+  if (!participantIds.length) return fail(c, '请至少填写一个有效的收件人用户名')
+
+  const id = await repo.createDmThread({ creatorId: user.id, title, participantIds, body })
+  return c.json({ id }, 201)
+})
+
+api.get('/dm/threads/:id', requireAuth, async (c) => {
+  const user = c.get('user')!
+  const id = idOf(c)
+  if (!id) return fail(c, '无效的私信 ID', 404)
+  const thread = await repo.findDmThread(id)
+  if (!thread || !(await repo.isDmParticipant(id, user.id))) {
+    return fail(c, '私信不存在或无权访问', 404)
+  }
+  const [messages, participants] = await Promise.all([
+    repo.listDmMessages(id),
+    repo.listDmParticipants(id),
+  ])
+  return c.json({ thread: { ...thread, participants }, messages })
+})
+
+api.post('/dm/threads/:id/messages', requireAuth, async (c) => {
+  const user = c.get('user')!
+  const id = idOf(c)
+  if (!id) return fail(c, '无效的私信 ID', 404)
+  if (!(await repo.findDmThread(id)) || !(await repo.isDmParticipant(id, user.id))) {
+    return fail(c, '私信不存在或无权访问', 404)
+  }
+  const b = await readJson(c)
+  const body = str(b.body).trim()
+  if (body.length < 1 || body.length > 20000) return fail(c, '内容不能为空，且不超过 20000 字')
+  return c.json({ id: await repo.createDmMessage({ threadId: id, authorId: user.id, body }) }, 201)
+})
+
+/** Clears the viewer's unread count for a conversation. */
+api.post('/dm/threads/:id/read', requireAuth, async (c) => {
+  const user = c.get('user')!
+  const id = idOf(c)
+  if (!id) return fail(c, '无效的私信 ID', 404)
+  if (!(await repo.isDmParticipant(id, user.id))) return fail(c, '私信不存在或无权访问', 404)
+  await repo.markDmRead(id, user.id)
+  return c.json({ ok: true })
+})
+
+/** Only the creator (or an admin) may remove a conversation. */
+api.delete('/dm/threads/:id', requireAuth, async (c) => {
+  const user = c.get('user')!
+  const id = idOf(c)
+  if (!id) return fail(c, '无效的私信 ID', 404)
+  const thread = await repo.findDmThread(id)
+  if (!thread) return fail(c, '私信不存在', 404)
+  if (thread.creatorId !== user.id && user.role !== 'admin') return fail(c, '无权删除该私信', 403)
+  await repo.deleteDmThread(id)
+  return c.json({ ok: true })
+})
+
+// --------------------------------------------------------------- drafts
+
+/** Reads and bounds the fields shared by draft create/update. */
+function draftFields(
+  b: Record<string, unknown>,
+): { categoryId: number | null; title: string; body: string } | { error: string } {
+  const title = str(b.title).trim()
+  const body = str(b.body).trim()
+  const rawCategory = b.categoryId == null || b.categoryId === '' ? null : Number(b.categoryId)
+  const categoryId =
+    rawCategory !== null && Number.isInteger(rawCategory) && rawCategory > 0 ? rawCategory : null
+  if (title.length > 200) return { error: '标题最长 200 字' }
+  if (body.length > 20000) return { error: '正文最长 20000 字' }
+  if (!title && !body) return { error: '草稿不能为空' }
+  return { categoryId, title, body }
+}
+
+api.get('/drafts', requireAuth, async (c) => c.json(await repo.listDrafts(c.get('user')!.id)))
+
+api.get('/drafts/:id', requireAuth, async (c) => {
+  const user = c.get('user')!
+  const id = idOf(c)
+  if (!id) return fail(c, '无效的草稿 ID', 404)
+  const draft = await repo.findDraft(id)
+  // 404 also for someone else's draft: existence is not leaked.
+  if (!draft || draft.authorId !== user.id) return fail(c, '草稿不存在', 404)
+  return c.json(draft)
+})
+
+api.post('/drafts', requireAuth, async (c) => {
+  const user = c.get('user')!
+  const fields = draftFields(await readJson(c))
+  if ('error' in fields) return fail(c, fields.error)
+  if (fields.categoryId !== null && !(await repo.findCategory(fields.categoryId))) {
+    return fail(c, '版块不存在', 404)
+  }
+  return c.json({ id: await repo.createDraft({ authorId: user.id, ...fields }) }, 201)
+})
+
+api.patch('/drafts/:id', requireAuth, async (c) => {
+  const user = c.get('user')!
+  const id = idOf(c)
+  if (!id) return fail(c, '无效的草稿 ID', 404)
+  const draft = await repo.findDraft(id)
+  if (!draft || draft.authorId !== user.id) return fail(c, '草稿不存在', 404)
+
+  const fields = draftFields(await readJson(c))
+  if ('error' in fields) return fail(c, fields.error)
+  if (fields.categoryId !== null && !(await repo.findCategory(fields.categoryId))) {
+    return fail(c, '版块不存在', 404)
+  }
+  await repo.updateDraft(id, fields)
+  return c.json({ ok: true })
+})
+
+api.delete('/drafts/:id', requireAuth, async (c) => {
+  const user = c.get('user')!
+  const id = idOf(c)
+  if (!id) return fail(c, '无效的草稿 ID', 404)
+  const draft = await repo.findDraft(id)
+  if (!draft || draft.authorId !== user.id) return fail(c, '草稿不存在', 404)
+  await repo.deleteDraft(id)
+  return c.json({ ok: true })
+})
+
 // ------------------------------------------------------------------ setup
 
 /**
@@ -636,7 +825,8 @@ api.post('/setup', async (c) => {
     createdAt: new Date().toISOString(),
   })
   await startSession(c, id, 0)
-  await repo.saveSettings({ siteName, siteDescription })
+  // Notice/footer start empty; an admin fills them in from 管理后台 → 站点.
+  await repo.saveSettings({ siteName, siteDescription, siteNotice: '', siteFooter: '' })
   for (const [index, name] of categories.entries()) {
     await repo.createCategory({ name, description: '', position: index, parentId: null })
   }
@@ -654,13 +844,19 @@ api.get('/admin/users', async (c) => c.json(await repo.listUsers()))
 
 api.patch('/admin/users/:id', async (c) => {
   const admin = c.get('user')!
-  const id = idOf(c)
-  if (!id) return fail(c, '无效的用户 ID', 404)
+  // Negative ids are accepted here (0 is not a real id) so the system account's
+  // public profile stays editable from the same route.
+  const id = Number(c.req.param('id'))
+  if (!Number.isInteger(id) || id === 0) return fail(c, '无效的用户 ID', 404)
   const target = await repo.findUserById(id)
   if (!target) return fail(c, '用户不存在', 404)
+  // The system account may only have its profile edited — never banned,
+  // re-roled, credited or grouped.
+  const isSystem = id < 0
 
   const b = await readJson(c)
   if (typeof b.banned === 'boolean') {
+    if (isSystem) return fail(c, '系统账号不可封禁', 403)
     if (b.banned && id === admin.id) return fail(c, '不能封禁自己')
     await repo.setUserBan(id, {
       banned: b.banned,
@@ -669,15 +865,36 @@ api.patch('/admin/users/:id', async (c) => {
     })
   }
   if (typeof b.role === 'string') {
+    if (isSystem) return fail(c, '系统账号不可修改角色', 403)
     if (!ROLE_RE.test(b.role)) return fail(c, '角色只能是 user 或 admin')
     await repo.setUserRole(id, b.role as Role)
   }
   if (b.creditDelta != null) {
+    if (isSystem) return fail(c, '系统账号不可调整信用分', 403)
     const delta = Number(b.creditDelta)
     if (!Number.isFinite(delta) || delta === 0 || Math.abs(delta) > 1000) {
       return fail(c, '无效的信用分调整')
     }
     await repo.applyCredit(id, Math.trunc(delta))
+  }
+  // `null`/`''` clears the membership; otherwise the group must exist.
+  if ('groupId' in b) {
+    if (isSystem) return fail(c, '系统账号不可设置用户组', 403)
+    const groupId = b.groupId == null || b.groupId === '' ? null : Number(b.groupId)
+    if (groupId !== null && !(await repo.findGroup(groupId))) return fail(c, '用户组不存在', 404)
+    await repo.setUserGroup(id, groupId)
+  }
+  // Admin edit of a member's public profile. Only the fields present are
+  // touched, so a partial patch never blanks the rest.
+  if ('displayName' in b || 'bio' in b || 'avatarUrl' in b) {
+    const displayName = str(b.displayName).trim() || target.displayName
+    const bio = 'bio' in b ? str(b.bio).trim() : target.bio
+    const avatarUrl = 'avatarUrl' in b ? str(b.avatarUrl).trim() : target.avatarUrl
+    if (displayName.length < 1 || displayName.length > 32) return fail(c, '昵称长度需为 1-32 字')
+    if (bio.length > 500) return fail(c, '简介最长 500 字')
+    if (avatarUrl.length > 512) return fail(c, '头像地址过长')
+    if (avatarUrl && !/^(https?:\/\/|\/)/.test(avatarUrl)) return fail(c, '头像需为 http(s) 或站内路径')
+    await repo.updateUserProfile(id, { displayName, bio, avatarUrl })
   }
   const user = await repo.findUserById(id)
   return c.json({ user: toPublicUser(user!) })
@@ -785,6 +1002,104 @@ api.delete('/admin/tags/:id', async (c) => {
   if (!id) return fail(c, '无效的标签 ID', 404)
   if (!(await repo.findTag(id))) return fail(c, '标签不存在', 404)
   await repo.deleteTag(id)
+  return c.json({ ok: true })
+})
+
+// ------------------------------------------------------------ user groups
+
+const COLOR_RE = /^#[0-9a-fA-F]{6}$/
+
+api.post('/admin/groups', async (c) => {
+  const b = await readJson(c)
+  const name = str(b.name).trim()
+  const color = str(b.color).trim() || '#f5b32c'
+  const position = Number.isInteger(Number(b.position)) ? Number(b.position) : 0
+  if (name.length < 1 || name.length > 20) return fail(c, '用户组名长度需为 1-20 字')
+  if (!COLOR_RE.test(color)) return fail(c, '颜色需为 #rrggbb 格式')
+  if ((await repo.listGroups()).some((g) => g.name === name)) return fail(c, '用户组已存在', 409)
+  return c.json({ id: await repo.createGroup({ name, color, position }) }, 201)
+})
+
+api.patch('/admin/groups/:id', async (c) => {
+  const id = idOf(c)
+  if (!id) return fail(c, '无效的用户组 ID', 404)
+  const current = await repo.findGroup(id)
+  if (!current) return fail(c, '用户组不存在', 404)
+
+  const b = await readJson(c)
+  const name = str(b.name).trim() || current.name
+  const color = str(b.color).trim() || current.color
+  const position = Number.isInteger(Number(b.position)) ? Number(b.position) : current.position
+  if (name.length < 1 || name.length > 20) return fail(c, '用户组名长度需为 1-20 字')
+  if (!COLOR_RE.test(color)) return fail(c, '颜色需为 #rrggbb 格式')
+  if ((await repo.listGroups()).some((g) => g.name === name && g.id !== id)) {
+    return fail(c, '用户组已存在', 409)
+  }
+  await repo.updateGroup(id, { name, color, position })
+  return c.json({ ok: true })
+})
+
+api.delete('/admin/groups/:id', async (c) => {
+  const id = idOf(c)
+  if (!id) return fail(c, '无效的用户组 ID', 404)
+  if (!(await repo.findGroup(id))) return fail(c, '用户组不存在', 404)
+  await repo.deleteGroup(id)
+  return c.json({ ok: true })
+})
+
+// ------------------------------------------------------------- site texts
+
+/** Edits the site's name, blurb, home announcement and footer in one call. */
+api.patch('/admin/settings', async (c) => {
+  const b = await readJson(c)
+  const current = await repo.getSettings()
+  const siteName = str(b.siteName).trim() || current.siteName
+  const siteDescription = str(b.siteDescription).trim()
+  const siteNotice = str(b.siteNotice).trim()
+  const siteFooter = str(b.siteFooter).trim()
+  if (siteName.length > 50) return fail(c, '站点名称最长 50 字')
+  if (siteDescription.length > 200) return fail(c, '站点简介最长 200 字')
+  if (siteNotice.length > 2000) return fail(c, '公告最长 2000 字')
+  if (siteFooter.length > 500) return fail(c, '页脚最长 500 字')
+  await repo.saveSettings({ siteName, siteDescription, siteNotice, siteFooter })
+  return c.json(await repo.getSettings())
+})
+
+// ---------------------------------------------------------- report reasons
+
+api.post('/admin/report-reasons', async (c) => {
+  const b = await readJson(c)
+  const label = str(b.label).trim()
+  const position = Number.isInteger(Number(b.position)) ? Number(b.position) : 0
+  if (label.length < 1 || label.length > 30) return fail(c, '理由长度需为 1-30 字')
+  if ((await repo.listReportReasons()).some((r) => r.label === label)) {
+    return fail(c, '该举报理由已存在', 409)
+  }
+  return c.json({ id: await repo.createReportReason(label, position) }, 201)
+})
+
+api.patch('/admin/report-reasons/:id', async (c) => {
+  const id = idOf(c)
+  if (!id) return fail(c, '无效的理由 ID', 404)
+  const current = await repo.findReportReason(id)
+  if (!current) return fail(c, '举报理由不存在', 404)
+
+  const b = await readJson(c)
+  const label = str(b.label).trim() || current.label
+  const position = Number.isInteger(Number(b.position)) ? Number(b.position) : current.position
+  if (label.length < 1 || label.length > 30) return fail(c, '理由长度需为 1-30 字')
+  if ((await repo.listReportReasons()).some((r) => r.label === label && r.id !== id)) {
+    return fail(c, '该举报理由已存在', 409)
+  }
+  await repo.updateReportReason(id, { label, position })
+  return c.json({ ok: true })
+})
+
+api.delete('/admin/report-reasons/:id', async (c) => {
+  const id = idOf(c)
+  if (!id) return fail(c, '无效的理由 ID', 404)
+  if (!(await repo.findReportReason(id))) return fail(c, '举报理由不存在', 404)
+  await repo.deleteReportReason(id)
   return c.json({ ok: true })
 })
 

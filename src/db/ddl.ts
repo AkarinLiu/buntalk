@@ -28,6 +28,7 @@ const sqlite = {
       bio TEXT NOT NULL DEFAULT '',
       avatar_url TEXT NOT NULL DEFAULT '',
       role TEXT NOT NULL DEFAULT 'user',
+      group_id INTEGER REFERENCES user_groups(id) ON DELETE SET NULL,
       banned INTEGER NOT NULL DEFAULT 0,
       credit INTEGER NOT NULL DEFAULT 100,
       ban_reason TEXT NOT NULL DEFAULT '',
@@ -45,6 +46,12 @@ const sqlite = {
       attempts INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       PRIMARY KEY (user_id, kind)
+    )`,
+    `CREATE TABLE IF NOT EXISTS user_groups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      color TEXT NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0
     )`,
     `CREATE TABLE IF NOT EXISTS categories (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -99,10 +106,46 @@ const sqlite = {
       handled_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
       handled_at TEXT
     )`,
+    `CREATE TABLE IF NOT EXISTS dm_threads (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      creator_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL,
+      last_message_at TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS dm_participants (
+      thread_id INTEGER NOT NULL REFERENCES dm_threads(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      last_read_at TEXT,
+      PRIMARY KEY (thread_id, user_id)
+    )`,
+    `CREATE TABLE IF NOT EXISTS dm_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      thread_id INTEGER NOT NULL REFERENCES dm_threads(id) ON DELETE CASCADE,
+      author_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      body TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS report_reasons (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      label TEXT NOT NULL UNIQUE,
+      position INTEGER NOT NULL DEFAULT 0
+    )`,
+    `CREATE TABLE IF NOT EXISTS drafts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      author_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`,
     `CREATE TABLE IF NOT EXISTS settings (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       site_name TEXT NOT NULL DEFAULT '',
-      site_description TEXT NOT NULL DEFAULT ''
+      site_description TEXT NOT NULL DEFAULT '',
+      site_notice TEXT NOT NULL DEFAULT '',
+      site_footer TEXT NOT NULL DEFAULT ''
     )`,
   ],
   patches: [
@@ -118,6 +161,9 @@ const sqlite = {
     `ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''`,
     `ALTER TABLE users ADD COLUMN email_verified BOOLEAN NOT NULL DEFAULT FALSE`,
     `ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE users ADD COLUMN group_id INTEGER REFERENCES user_groups(id) ON DELETE SET NULL`,
+    `ALTER TABLE settings ADD COLUMN site_notice TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE settings ADD COLUMN site_footer TEXT NOT NULL DEFAULT ''`,
   ],
   indexes: [
     `CREATE INDEX IF NOT EXISTS idx_threads_category ON threads(category_id)`,
@@ -129,6 +175,10 @@ const sqlite = {
     `CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status)`,
     `CREATE INDEX IF NOT EXISTS idx_reports_target ON reports(target_type, target_id)`,
     `CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
+    `CREATE INDEX IF NOT EXISTS idx_users_group ON users(group_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_dm_participants_user ON dm_participants(user_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_dm_messages_thread ON dm_messages(thread_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_drafts_author ON drafts(author_id)`,
   ],
 }
 
@@ -142,6 +192,7 @@ const pg = {
       bio TEXT NOT NULL DEFAULT '',
       avatar_url TEXT NOT NULL DEFAULT '',
       role TEXT NOT NULL DEFAULT 'user',
+      group_id INTEGER REFERENCES user_groups(id) ON DELETE SET NULL,
       banned BOOLEAN NOT NULL DEFAULT FALSE,
       credit INTEGER NOT NULL DEFAULT 100,
       ban_reason TEXT NOT NULL DEFAULT '',
@@ -159,6 +210,12 @@ const pg = {
       attempts INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       PRIMARY KEY (user_id, kind)
+    )`,
+    `CREATE TABLE IF NOT EXISTS user_groups (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      color TEXT NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0
     )`,
     `CREATE TABLE IF NOT EXISTS categories (
       id SERIAL PRIMARY KEY,
@@ -213,10 +270,46 @@ const pg = {
       handled_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
       handled_at TEXT
     )`,
+    `CREATE TABLE IF NOT EXISTS dm_threads (
+      id SERIAL PRIMARY KEY,
+      title TEXT NOT NULL,
+      creator_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL,
+      last_message_at TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS dm_participants (
+      thread_id INTEGER NOT NULL REFERENCES dm_threads(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      last_read_at TEXT,
+      PRIMARY KEY (thread_id, user_id)
+    )`,
+    `CREATE TABLE IF NOT EXISTS dm_messages (
+      id SERIAL PRIMARY KEY,
+      thread_id INTEGER NOT NULL REFERENCES dm_threads(id) ON DELETE CASCADE,
+      author_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      body TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS report_reasons (
+      id SERIAL PRIMARY KEY,
+      label TEXT NOT NULL UNIQUE,
+      position INTEGER NOT NULL DEFAULT 0
+    )`,
+    `CREATE TABLE IF NOT EXISTS drafts (
+      id SERIAL PRIMARY KEY,
+      author_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`,
     `CREATE TABLE IF NOT EXISTS settings (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       site_name TEXT NOT NULL DEFAULT '',
-      site_description TEXT NOT NULL DEFAULT ''
+      site_description TEXT NOT NULL DEFAULT '',
+      site_notice TEXT NOT NULL DEFAULT '',
+      site_footer TEXT NOT NULL DEFAULT ''
     )`,
   ],
   patches: [
@@ -232,6 +325,9 @@ const pg = {
     `ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''`,
     `ALTER TABLE users ADD COLUMN email_verified BOOLEAN NOT NULL DEFAULT FALSE`,
     `ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE users ADD COLUMN group_id INTEGER REFERENCES user_groups(id) ON DELETE SET NULL`,
+    `ALTER TABLE settings ADD COLUMN site_notice TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE settings ADD COLUMN site_footer TEXT NOT NULL DEFAULT ''`,
   ],
   indexes: [
     `CREATE INDEX IF NOT EXISTS idx_threads_category ON threads(category_id)`,
@@ -243,6 +339,10 @@ const pg = {
     `CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status)`,
     `CREATE INDEX IF NOT EXISTS idx_reports_target ON reports(target_type, target_id)`,
     `CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
+    `CREATE INDEX IF NOT EXISTS idx_users_group ON users(group_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_dm_participants_user ON dm_participants(user_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_dm_messages_thread ON dm_messages(thread_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_drafts_author ON drafts(author_id)`,
   ],
 }
 
@@ -259,6 +359,7 @@ const mysql = {
       bio TEXT NOT NULL,
       avatar_url VARCHAR(512) NOT NULL DEFAULT '',
       role VARCHAR(32) NOT NULL DEFAULT 'user',
+      group_id INT NULL,
       banned TINYINT(1) NOT NULL DEFAULT 0,
       credit INT NOT NULL DEFAULT 100,
       ban_reason VARCHAR(255) NOT NULL DEFAULT '',
@@ -278,6 +379,13 @@ const mysql = {
       created_at VARCHAR(40) NOT NULL,
       PRIMARY KEY (user_id, kind),
       CONSTRAINT fk_email_tokens_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    `CREATE TABLE IF NOT EXISTS user_groups (
+      id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(191) NOT NULL,
+      color VARCHAR(7) NOT NULL,
+      position INT NOT NULL DEFAULT 0,
+      UNIQUE KEY uq_user_groups_name (name)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
     `CREATE TABLE IF NOT EXISTS categories (
       id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -353,10 +461,58 @@ const mysql = {
       CONSTRAINT fk_reports_reporter FOREIGN KEY (reporter_id) REFERENCES users(id) ON DELETE CASCADE,
       CONSTRAINT fk_reports_handler FOREIGN KEY (handled_by) REFERENCES users(id) ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    `CREATE TABLE IF NOT EXISTS dm_threads (
+      id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      title VARCHAR(255) NOT NULL,
+      creator_id INT NOT NULL,
+      created_at VARCHAR(40) NOT NULL,
+      last_message_at VARCHAR(40) NOT NULL,
+      KEY idx_dm_threads_last_message (last_message_at),
+      CONSTRAINT fk_dm_threads_creator FOREIGN KEY (creator_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    `CREATE TABLE IF NOT EXISTS dm_participants (
+      thread_id INT NOT NULL,
+      user_id INT NOT NULL,
+      last_read_at VARCHAR(40) NULL,
+      PRIMARY KEY (thread_id, user_id),
+      KEY idx_dm_participants_user (user_id),
+      CONSTRAINT fk_dm_participants_thread FOREIGN KEY (thread_id) REFERENCES dm_threads(id) ON DELETE CASCADE,
+      CONSTRAINT fk_dm_participants_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    `CREATE TABLE IF NOT EXISTS dm_messages (
+      id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      thread_id INT NOT NULL,
+      author_id INT NOT NULL,
+      body TEXT NOT NULL,
+      created_at VARCHAR(40) NOT NULL,
+      KEY idx_dm_messages_thread (thread_id),
+      CONSTRAINT fk_dm_messages_thread FOREIGN KEY (thread_id) REFERENCES dm_threads(id) ON DELETE CASCADE,
+      CONSTRAINT fk_dm_messages_author FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    `CREATE TABLE IF NOT EXISTS report_reasons (
+      id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      label VARCHAR(191) NOT NULL,
+      position INT NOT NULL DEFAULT 0,
+      UNIQUE KEY uq_report_reasons_label (label)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    `CREATE TABLE IF NOT EXISTS drafts (
+      id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      author_id INT NOT NULL,
+      category_id INT NULL,
+      title VARCHAR(255) NOT NULL,
+      body TEXT NOT NULL,
+      created_at VARCHAR(40) NOT NULL,
+      updated_at VARCHAR(40) NOT NULL,
+      KEY idx_drafts_author (author_id),
+      CONSTRAINT fk_drafts_author FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_drafts_category FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
     `CREATE TABLE IF NOT EXISTS settings (
       id INT NOT NULL PRIMARY KEY,
       site_name VARCHAR(191) NOT NULL DEFAULT '',
       site_description VARCHAR(500) NOT NULL DEFAULT '',
+      site_notice VARCHAR(2000) NOT NULL DEFAULT '',
+      site_footer VARCHAR(500) NOT NULL DEFAULT '',
       CONSTRAINT chk_settings_single CHECK (id = 1)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   ],
@@ -373,6 +529,12 @@ const mysql = {
     `ALTER TABLE users ADD COLUMN email VARCHAR(254) NOT NULL DEFAULT ''`,
     `ALTER TABLE users ADD COLUMN email_verified TINYINT(1) NOT NULL DEFAULT 0`,
     `ALTER TABLE users ADD COLUMN session_version INT NOT NULL DEFAULT 0`,
+    `ALTER TABLE users ADD COLUMN group_id INT NULL`,
+    // FK added separately: `user_groups` must exist first, and MySQL fails a
+    // CREATE that references a table not yet created.
+    `ALTER TABLE users ADD CONSTRAINT fk_users_group FOREIGN KEY (group_id) REFERENCES user_groups(id) ON DELETE SET NULL`,
+    `ALTER TABLE settings ADD COLUMN site_notice VARCHAR(2000) NOT NULL DEFAULT ''`,
+    `ALTER TABLE settings ADD COLUMN site_footer VARCHAR(500) NOT NULL DEFAULT ''`,
   ],
   // Tolerant: MySQL has no CREATE INDEX IF NOT EXISTS, so a re-run just fails.
   indexes: [`CREATE INDEX idx_users_email ON users(email)`] as string[],

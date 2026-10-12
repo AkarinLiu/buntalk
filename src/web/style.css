@@ -447,6 +447,17 @@ textarea {
   line-height: 1.65;
 }
 
+/* Colour swatch for the user-group editor. */
+input[type='color'] {
+  width: 64px;
+  height: 36px;
+  padding: 2px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  cursor: pointer;
+}
+
 input:focus,
 textarea:focus,
 select:focus {
@@ -601,6 +612,8 @@ textarea::placeholder {
   font-size: 12px;
   font-weight: 550;
   line-height: 1.7;
+  /* Never let a narrow table column break a badge into one char per line. */
+  white-space: nowrap;
 }
 
 .pill-accent {
@@ -620,6 +633,21 @@ textarea::placeholder {
   border-color: rgb(255 122 26 / 45%);
   background: rgb(255 122 26 / 14%);
   color: var(--orange);
+}
+
+/* User-group badge: the colour comes from the group row, so only the shape
+   lives here. `currentColor` keeps the fill a faint tint of the border. */
+.group-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 1.7;
+  white-space: nowrap;
 }
 
 .avatar {
@@ -678,6 +706,61 @@ textarea::placeholder {
   border-radius: var(--radius);
   color: var(--text-muted);
   text-align: center;
+}
+
+/* Editable site texts: the home announcement and the page footer. */
+.site-notice {
+  margin-bottom: 22px;
+}
+
+.site-footer {
+  padding: 22px 28px 34px;
+  border-top: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: 13px;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* Removable chips in the admin report-reason editor. */
+.reason-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.reason-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px 3px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.reason-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.reason-del:hover {
+  background: var(--surface-3);
+  color: var(--danger);
 }
 
 /* --------------------------------------------------- gradient accent */
@@ -1008,6 +1091,135 @@ textarea::placeholder {
   font-size: 12.5px;
 }
 
+/* ---------------------------------------------------- private messages */
+
+.dm-layout {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.dm-list {
+  max-height: 660px;
+  overflow-y: auto;
+}
+
+.dm-item {
+  display: block;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.12s;
+}
+
+.dm-item:last-child {
+  border-bottom: none;
+}
+
+.dm-item:hover {
+  background: var(--surface-2);
+}
+
+.dm-item.active {
+  background: var(--surface-2);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.dm-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dm-item-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 560;
+  font-size: 14px;
+}
+
+.dm-unread {
+  flex: none;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
+.dm-item-sub {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.dm-item-preview {
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dm-panel {
+  overflow: hidden;
+}
+
+.dm-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.dm-messages {
+  max-height: 460px;
+  overflow-y: auto;
+}
+
+.dm-message {
+  display: flex;
+  gap: 12px;
+  padding: 14px 18px;
+}
+
+.dm-message + .dm-message {
+  border-top: 1px solid var(--border);
+}
+
+.dm-message-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.dm-compose {
+  padding: 14px 18px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.dm-empty {
+  margin: 0;
+  padding: 18px;
+  color: var(--text-faint);
+  font-size: 13.5px;
+}
+
+@media (max-width: 860px) {
+  .dm-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* --------------------------------------------------------- admin table */
 
 .table {
@@ -1029,6 +1241,7 @@ textarea::placeholder {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  white-space: nowrap;
 }
 
 .table tr:last-child td {
@@ -1039,6 +1252,69 @@ textarea::placeholder {
   display: flex;
   gap: 7px;
   justify-content: flex-end;
+}
+
+/* Inline group picker in the admin users list. */
+.group-select {
+  width: auto;
+  min-width: 96px;
+  padding: 5px 8px;
+  font-size: 13px;
+}
+
+/* Users tab is a card list, not a table: the action row wraps instead of
+   squeezing the badges into one character per column. */
+.user-list {
+  display: grid;
+  gap: 10px;
+}
+
+.user-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 14px 18px;
+}
+
+.user-main {
+  flex: 1;
+  min-width: 220px;
+}
+
+.user-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.user-meta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.user-meta b {
+  color: var(--text);
+}
+
+.user-group-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.user-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  flex-wrap: wrap;
 }
 
 /* ------------------------------------------- reka-ui component states

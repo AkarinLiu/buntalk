@@ -30,6 +30,12 @@ onMounted(async () => {
       <router-link v-if="auth.user" to="/new" class="side-link">
         <span class="side-ico" aria-hidden="true">✎</span>发表主题
       </router-link>
+      <router-link v-if="auth.user" to="/messages" class="side-link">
+        <span class="side-ico" aria-hidden="true">✉</span>私信
+      </router-link>
+      <router-link v-if="auth.user" to="/drafts" class="side-link">
+        <span class="side-ico" aria-hidden="true">▤</span>草稿箱
+      </router-link>
       <router-link v-if="auth.user?.role === 'admin'" to="/admin" class="side-link">
         <span class="side-ico" aria-hidden="true">⚙</span>管理后台
       </router-link>

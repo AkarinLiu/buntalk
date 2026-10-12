@@ -6,12 +6,18 @@
  */
 import type {
   CategoryRow,
+  DmMessageRow,
+  DmThreadRow,
+  DraftRow,
   PostRow,
   PublicUser,
+  ReportReasonRow,
   ReportRow,
   SelfUser,
+  SettingsRow,
   TagRow,
   ThreadRow,
+  UserGroupRow,
 } from '../shared/types'
 
 export class ApiError extends Error {
@@ -98,6 +104,8 @@ export interface SetupStatusResponse {
   needsSetup: boolean
   siteName: string
   siteDescription: string
+  siteNotice: string
+  siteFooter: string
 }
 export interface MetaResponse {
   mailConfigured: boolean
@@ -138,7 +146,16 @@ export interface UploadResponse {
   mime: string
   size: number
 }
+export interface DmThreadDetailResponse {
+  thread: DmThreadRow
+  messages: DmMessageRow[]
+}
 export type CategoriesResponse = CategoryRow[]
 export type ThreadsResponse = ThreadRow[]
 export type TagsResponse = TagRow[]
 export type ReportsResponse = ReportRow[]
+export type GroupsResponse = UserGroupRow[]
+export type DmThreadsResponse = DmThreadRow[]
+export type ReportReasonsResponse = ReportReasonRow[]
+export type SettingsResponse = SettingsRow
+export type DraftsResponse = DraftRow[]

@@ -45,8 +45,18 @@ describe('first-run setup', () => {
     expect(r.meUser?.username).toBe('root_admin')
     expect(r.categories).toEqual(['公告', '综合讨论'])
     expect([...r.tags].sort()).toEqual(['教程', '求助'].sort())
-    expect(r.settings).toEqual({ siteName: '彩虹论坛', siteDescription: '一个测试站点' })
-    expect(r.updatedSettings).toEqual({ siteName: '再改', siteDescription: 'x' })
+    expect(r.settings).toEqual({
+      siteName: '彩虹论坛',
+      siteDescription: '一个测试站点',
+      siteNotice: '',
+      siteFooter: '',
+    })
+    expect(r.updatedSettings).toEqual({
+      siteName: '再改',
+      siteDescription: 'x',
+      siteNotice: '',
+      siteFooter: '',
+    })
 
     // Now initialized, and locked against a second run.
     expect(r.after.needsSetup).toBe(false)

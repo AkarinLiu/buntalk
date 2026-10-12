@@ -2,11 +2,14 @@
  * Server entry — `bun run index.ts`, or `bun run dev` for API + Vite together.
  */
 import { databaseUrl, dialect, ensureSchema } from './src/db/index'
+import { ensureReportReasons, ensureSystemUser } from './src/db/repo'
 import { app } from './src/server/app'
 import { mailConfigured } from './src/server/mailer'
 import { driver as storageDriver, maxUploadBytes, uploadDir } from './src/server/storage'
 
 await ensureSchema()
+await ensureSystemUser()
+await ensureReportReasons()
 
 // Forced binding is a no-op without mail; say so loudly rather than silently
 // ignoring the flag (which would be indistinguishable from a typo).

@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { errMessage, http } from '../api'
 import type { CategoriesResponse, IdResponse, TagsResponse } from '../api'
-import type { CategoryRow, TagRow } from '../../shared/types'
+import type { CategoryRow, DraftRow, TagRow } from '../../shared/types'
 import MarkdownEditor from '../components/MarkdownEditor.vue'
 import { auth } from '../store'
 
 const props = defineProps<{ presetCategory?: number }>()
+const route = useRoute()
 const router = useRouter()
 
 const categories = ref<CategoryRow[]>([])
@@ -17,7 +18,11 @@ const selectedTags = ref<number[]>([])
 const title = ref('')
 const body = ref('')
 const error = ref('')
+const notice = ref('')
 const submitting = ref(false)
+const savingDraft = ref(false)
+/** 0 until the draft is saved; then it is updated in place, not duplicated. */
+const draftId = ref(0)
 
 /** Top-level 版块 each followed by its 子版块, so the select reads as a tree. */
 const categoryOptions = computed(() => {
@@ -44,20 +49,58 @@ onMounted(async () => {
     if (!categoryId.value && categoryOptions.value.length) {
       categoryId.value = categoryOptions.value[0]!.id
     }
+
+    // Opened from the draft box: `?draft=<id>` loads it into the editor.
+    const draftParam = Number(route.query.draft)
+    if (Number.isInteger(draftParam) && draftParam > 0) {
+      const draft = await http.get<DraftRow>(`/drafts/${draftParam}`)
+      draftId.value = draft.id
+      title.value = draft.title
+      body.value = draft.body
+      if (draft.categoryId) categoryId.value = draft.categoryId
+    }
   } catch (err) {
-    error.value = errMessage(err, '加载版块失败')
+    error.value = errMessage(err, '加载失败')
   }
 })
+
+function payload() {
+  return {
+    categoryId: categoryId.value || null,
+    title: title.value.trim(),
+    body: body.value.trim(),
+  }
+}
+
+async function saveDraft(): Promise<void> {
+  error.value = ''
+  notice.value = ''
+  const draft = payload()
+  if (!draft.title && !draft.body) {
+    error.value = '草稿不能为空'
+    return
+  }
+  savingDraft.value = true
+  try {
+    if (draftId.value) await http.patch(`/drafts/${draftId.value}`, draft)
+    else draftId.value = (await http.post<IdResponse>('/drafts', draft)).id
+    notice.value = '草稿已保存'
+  } catch (err) {
+    error.value = errMessage(err)
+  } finally {
+    savingDraft.value = false
+  }
+}
 
 async function submit(): Promise<void> {
   error.value = ''
   submitting.value = true
   try {
     const { id } = await http.post<IdResponse>('/threads', {
-      categoryId: categoryId.value,
-      title: title.value.trim(),
-      body: body.value.trim(),
+      ...payload(),
       tagIds: selectedTags.value,
+      // Publishing consumes the draft server-side.
+      draftId: draftId.value || undefined,
     })
     await router.push(`/t/${id}`)
   } catch (err) {
@@ -76,6 +119,7 @@ async function submit(): Promise<void> {
     </p>
 
     <p v-if="error" class="form-error">{{ error }}</p>
+    <p v-if="notice" class="form-ok">{{ notice }}</p>
 
     <form class="card card-pad" @submit.prevent="submit">
       <label class="field">
@@ -119,6 +163,9 @@ async function submit(): Promise<void> {
 
       <div style="display: flex; justify-content: flex-end; gap: 10px">
         <router-link to="/" class="btn">取消</router-link>
+        <button class="btn" type="button" :disabled="savingDraft" @click="saveDraft">
+          {{ savingDraft ? '保存中…' : draftId ? '更新草稿' : '存草稿' }}
+        </button>
         <button class="btn btn-primary" type="submit" :disabled="submitting">
           {{ submitting ? '提交中…' : '发表主题' }}
         </button>

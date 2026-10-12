@@ -6,6 +6,7 @@ import type { TagsResponse, ThreadsResponse } from '../api'
 import type { ThreadRow } from '../../shared/types'
 import { auth } from '../store'
 import { setup } from '../setup'
+import { renderMarkdown } from '../markdown'
 import TagList from '../components/TagList.vue'
 import UserAvatar from '../components/UserAvatar.vue'
 
@@ -60,6 +61,10 @@ const time = (iso: string) => iso.replace('T', ' ').slice(0, 16)
       <p class="welcome-lead">
         {{ setup.siteDescription || '一个跑在 Bun + Hono 上的论坛，同一套代码支持 SQLite、PostgreSQL 和 MySQL。' }}
       </p>
+    </section>
+
+    <section v-if="setup.siteNotice" class="card card-pad site-notice">
+      <div class="markdown-body" v-html="renderMarkdown(setup.siteNotice)"></div>
     </section>
 
     <section>

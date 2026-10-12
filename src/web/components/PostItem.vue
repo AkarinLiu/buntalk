@@ -2,8 +2,9 @@
 import { computed } from 'vue'
 import type { PostNode } from '../postTree'
 import { renderMarkdown } from '../markdown'
-import { auth } from '../store'
+import { auth, groupById } from '../store'
 import UserAvatar from './UserAvatar.vue'
+import UserGroupBadge from './UserGroupBadge.vue'
 
 const props = defineProps<{ node: PostNode }>()
 
@@ -23,6 +24,8 @@ const canManage = computed(() => {
 
 /** Anyone logged in can report, except the author of the post itself. */
 const canReport = computed(() => !!auth.user && auth.user.id !== props.node.post.authorId)
+
+const authorGroup = computed(() => groupById(post.value.author?.groupId))
 
 const likes = computed(() => post.value.likeCount ?? 0)
 const liked = computed(() => post.value.likedByMe ?? false)
@@ -48,6 +51,7 @@ const time = (iso: string) => iso.replace('T', ' ').slice(0, 16)
           {{ post.author.displayName }}
         </router-link>
         <span v-if="post.author?.role === 'admin'" class="pill pill-accent">管理员</span>
+        <UserGroupBadge :group="authorGroup" />
         <span class="faint mono">{{ time(post.createdAt) }}</span>
       </div>
 

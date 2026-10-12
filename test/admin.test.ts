@@ -7,9 +7,12 @@
 import { describe, expect, test } from 'bun:test'
 
 const store = await import('../src/db/index')
+const repo = await import('../src/db/repo')
 const { app } = await import('../src/server/app')
+const { SYSTEM_USER_ID } = await import('../src/shared/types')
 
 await store.ensureSchema()
+await repo.ensureSystemUser()
 
 /** `set-cookie` as a `name=value` pair usable as a request `cookie`. */
 function sessionCookie(res: Response): string {
@@ -62,7 +65,7 @@ describe('admin ban over HTTP', () => {
 
     // The admin page's loadAll fires these together; one failure aborts the
     // whole refresh, which would leave stale (unbanned) rows on screen.
-    const loadAllParts = ['/api/categories', '/api/admin/users', '/api/admin/threads?limit=100', '/api/tags', '/api/admin/reports', '/api/admin/mail']
+    const loadAllParts = ['/api/categories', '/api/admin/users', '/api/admin/threads?limit=100', '/api/tags', '/api/admin/reports', '/api/admin/mail', '/api/groups', '/api/setup/status', '/api/report-reasons']
     for (const path of loadAllParts) {
       const res = await app.request(path, { headers: { cookie: adminCookie } })
       expect(`${path} -> ${res.status}`).toBe(`${path} -> 200`)
@@ -89,5 +92,39 @@ describe('admin ban over HTTP', () => {
       banned: boolean
     }[]
     expect(after.find((u) => u.id === target.user.id)?.banned).toBe(false)
+
+    // An admin can edit a member's public profile, not just ban/credit.
+    const editedRes = await app.request(`/api/admin/users/${target.user.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', cookie: adminCookie },
+      body: JSON.stringify({ displayName: '改过的昵称', bio: '新简介' }),
+    })
+    expect(editedRes.status).toBe(200)
+    const edited = (await editedRes.json()) as { user: { displayName: string; bio: string } }
+    expect(edited.user.displayName).toBe('改过的昵称')
+    expect(edited.user.bio).toBe('新简介')
+
+    // The system account is listed, but only its profile may be edited.
+    const withSystem = (await (await app.request('/api/admin/users', { headers: { cookie: adminCookie } })).json()) as {
+      id: number
+    }[]
+    expect(withSystem.some((u) => u.id === SYSTEM_USER_ID)).toBe(true)
+
+    const banSystem = await app.request(`/api/admin/users/${SYSTEM_USER_ID}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', cookie: adminCookie },
+      body: JSON.stringify({ banned: true }),
+    })
+    expect(banSystem.status).toBe(403)
+
+    const renameSystem = await app.request(`/api/admin/users/${SYSTEM_USER_ID}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', cookie: adminCookie },
+      body: JSON.stringify({ displayName: '系统通知' }),
+    })
+    expect(renameSystem.status).toBe(200)
+    expect(((await renameSystem.json()) as { user: { displayName: string } }).user.displayName).toBe(
+      '系统通知',
+    )
   })
 })

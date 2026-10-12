@@ -15,6 +15,7 @@ export const users = mysqlTable('users', {
   bio: text('bio').notNull(),
   avatarUrl: varchar('avatar_url', { length: 512 }).notNull(),
   role: varchar('role', { length: 32 }).notNull(),
+  groupId: int('group_id'),
   banned: boolean('banned').notNull(),
   credit: int('credit').notNull(),
   banReason: varchar('ban_reason', { length: 255 }).notNull(),
@@ -32,6 +33,13 @@ export const emailTokens = mysqlTable('email_tokens', {
   expiresAt: varchar('expires_at', { length: 40 }).notNull(),
   attempts: int('attempts').notNull(),
   createdAt: varchar('created_at', { length: 40 }).notNull(),
+})
+
+export const userGroups = mysqlTable('user_groups', {
+  id: int('id').autoincrement().primaryKey(),
+  name: varchar('name', { length: 191 }).notNull().unique(),
+  color: varchar('color', { length: 7 }).notNull(),
+  position: int('position').notNull(),
 })
 
 export const categories = mysqlTable('categories', {
@@ -92,9 +100,50 @@ export const reports = mysqlTable('reports', {
   handledAt: varchar('handled_at', { length: 40 }),
 })
 
+// Private conversations, their members and their messages.
+export const dmThreads = mysqlTable('dm_threads', {
+  id: int('id').autoincrement().primaryKey(),
+  title: varchar('title', { length: 255 }).notNull(),
+  creatorId: int('creator_id').notNull(),
+  createdAt: varchar('created_at', { length: 40 }).notNull(),
+  lastMessageAt: varchar('last_message_at', { length: 40 }).notNull(),
+})
+
+export const dmParticipants = mysqlTable('dm_participants', {
+  threadId: int('thread_id').notNull(),
+  userId: int('user_id').notNull(),
+  lastReadAt: varchar('last_read_at', { length: 40 }),
+})
+
+export const dmMessages = mysqlTable('dm_messages', {
+  id: int('id').autoincrement().primaryKey(),
+  threadId: int('thread_id').notNull(),
+  authorId: int('author_id').notNull(),
+  body: text('body').notNull(),
+  createdAt: varchar('created_at', { length: 40 }).notNull(),
+})
+
 // Single row (id = 1); the DDL pins that with a CHECK constraint.
 export const settings = mysqlTable('settings', {
   id: int('id').primaryKey(),
   siteName: varchar('site_name', { length: 191 }).notNull(),
   siteDescription: varchar('site_description', { length: 500 }).notNull(),
+  siteNotice: varchar('site_notice', { length: 2000 }).notNull(),
+  siteFooter: varchar('site_footer', { length: 500 }).notNull(),
+})
+
+export const reportReasons = mysqlTable('report_reasons', {
+  id: int('id').autoincrement().primaryKey(),
+  label: varchar('label', { length: 191 }).notNull().unique(),
+  position: int('position').notNull(),
+})
+
+export const drafts = mysqlTable('drafts', {
+  id: int('id').autoincrement().primaryKey(),
+  authorId: int('author_id').notNull(),
+  categoryId: int('category_id'),
+  title: varchar('title', { length: 255 }).notNull(),
+  body: text('body').notNull(),
+  createdAt: varchar('created_at', { length: 40 }).notNull(),
+  updatedAt: varchar('updated_at', { length: 40 }).notNull(),
 })

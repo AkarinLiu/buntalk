@@ -16,6 +16,10 @@ export const setup = reactive({
   checked: false,
   siteName: 'buntalk',
   siteDescription: '',
+  /** home-page announcement (Markdown); '' hides it */
+  siteNotice: '',
+  /** footer line; '' hides it */
+  siteFooter: '',
 })
 
 export async function checkSetup(): Promise<void> {
@@ -24,6 +28,8 @@ export async function checkSetup(): Promise<void> {
     setup.needed = s.needsSetup
     setup.siteName = s.siteName
     setup.siteDescription = s.siteDescription
+    setup.siteNotice = s.siteNotice
+    setup.siteFooter = s.siteFooter
   } catch {
     // An unreachable API must not lock the UI into a redirect loop.
     setup.needed = false

@@ -18,6 +18,15 @@
 export type Dialect = 'sqlite' | 'pg' | 'mysql'
 export type Role = 'user' | 'admin'
 
+/**
+ * Reserved account for system-generated content (welcome private messages,
+ * future notices). A negative id can never collide with an auto-increment row
+ * and `idOf()` (which requires `> 0`) can never target it, so no route can ban,
+ * edit or impersonate it.
+ */
+export const SYSTEM_USER_ID = -1
+export const SYSTEM_USERNAME = 'system'
+
 export interface UserRow {
   id: number
   username: string
@@ -25,6 +34,8 @@ export interface UserRow {
   bio: string
   avatarUrl: string
   role: Role
+  /** badge group, null when ungrouped */
+  groupId: number | null
   banned: boolean
   /** reputation; new accounts start at CREDIT_START (100) */
   credit: number
@@ -49,6 +60,17 @@ export interface UserAuthRow extends UserRow {
   passwordHash: string
 }
 
+/** A display group members are assigned to; carries a badge colour, not permissions. */
+export interface UserGroupRow {
+  id: number
+  name: string
+  /** badge colour, `#rrggbb` */
+  color: string
+  position: number
+  /** filled by list queries only */
+  memberCount?: number
+}
+
 export interface CategoryRow {
   id: number
   /** null for a top-level 版块; set to the parent id for a 子版块 (one level only) */
@@ -68,10 +90,21 @@ export interface TagRow {
   threadCount?: number
 }
 
-/** Site-wide settings; the single row (id = 1) holds the site's name and blurb. */
+/** Site-wide settings; the single row (id = 1) holds the site's editable texts. */
 export interface SettingsRow {
   siteName: string
   siteDescription: string
+  /** full-width announcement on the home page, Markdown; hidden when '' */
+  siteNotice: string
+  /** footer line, shown on every page; hidden when '' */
+  siteFooter: string
+}
+
+/** A preset reason offered in the report dialog; admins manage the list. */
+export interface ReportReasonRow {
+  id: number
+  label: string
+  position: number
 }
 
 export interface ThreadRow {
@@ -105,15 +138,40 @@ export interface PostRow {
   body: string
   createdAt: string
   /** filled by list queries only */
-  author?: Pick<UserRow, 'id' | 'username' | 'displayName' | 'avatarUrl' | 'role'>
+  author?: Pick<UserRow, 'id' | 'username' | 'displayName' | 'avatarUrl' | 'role' | 'groupId'>
   likeCount?: number
   likedByMe?: boolean
+}
+
+/**
+ * An unpublished thread, private to its author. Tags are deliberately not kept
+ * here — the editor re-offers them when the draft is opened for publishing.
+ */
+export interface DraftRow {
+  id: number
+  authorId: number
+  /** the intended board, null until the author picks one */
+  categoryId: number | null
+  title: string
+  body: string
+  createdAt: string
+  updatedAt: string
+  /** filled by list queries only */
+  categoryName?: string
 }
 
 /** Safe-to-send user projection — no passwordHash, no ban internals. */
 export type PublicUser = Pick<
   UserRow,
-  'id' | 'username' | 'displayName' | 'bio' | 'avatarUrl' | 'role' | 'credit' | 'createdAt'
+  | 'id'
+  | 'username'
+  | 'displayName'
+  | 'bio'
+  | 'avatarUrl'
+  | 'role'
+  | 'groupId'
+  | 'credit'
+  | 'createdAt'
 >
 
 export const toPublicUser = (u: UserRow): PublicUser => ({
@@ -123,6 +181,7 @@ export const toPublicUser = (u: UserRow): PublicUser => ({
   bio: u.bio,
   avatarUrl: u.avatarUrl,
   role: u.role,
+  groupId: u.groupId ?? null,
   credit: u.credit,
   createdAt: u.createdAt,
 })
@@ -184,4 +243,35 @@ export interface ReportRow {
   targetLabel?: string
   /** the thread the target lives in, for linking */
   targetThreadId?: number | null
+}
+
+/** A participant of a private conversation, with just enough to render a name. */
+export type DmUser = Pick<UserRow, 'id' | 'username' | 'displayName' | 'avatarUrl' | 'groupId'>
+
+export interface DmMessageRow {
+  id: number
+  threadId: number
+  authorId: number
+  body: string
+  createdAt: string
+  /** filled by list queries only */
+  author?: DmUser
+}
+
+/**
+ * A private conversation — a titled "话题" between two or more members. Flat:
+ * every message is a reply to the topic, not to another message.
+ */
+export interface DmThreadRow {
+  id: number
+  title: string
+  creatorId: number
+  createdAt: string
+  lastMessageAt: string
+  /** filled by list/detail queries only */
+  participants?: DmUser[]
+  lastMessage?: Pick<DmMessageRow, 'authorId' | 'body' | 'createdAt'>
+  /** messages from others since the viewer last opened it */
+  unreadCount?: number
+  messageCount?: number
 }

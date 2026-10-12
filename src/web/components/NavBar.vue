@@ -32,6 +32,14 @@ function goProfile(): void {
   if (auth.user) void router.push(`/u/${auth.user.username}`)
 }
 
+function goMessages(): void {
+  void router.push('/messages')
+}
+
+function goDrafts(): void {
+  void router.push('/drafts')
+}
+
 async function onLogout(): Promise<void> {
   await logout()
   await router.push('/')
@@ -75,6 +83,8 @@ async function onLogout(): Promise<void> {
               <DropdownMenuContent class="menu-content" align="end">
                 <DropdownMenuLabel class="menu-label">{{ auth.user.displayName }}</DropdownMenuLabel>
                 <DropdownMenuItem class="menu-item" @select="goProfile">个人主页</DropdownMenuItem>
+                <DropdownMenuItem class="menu-item" @select="goMessages">私信</DropdownMenuItem>
+                <DropdownMenuItem class="menu-item" @select="goDrafts">草稿箱</DropdownMenuItem>
                 <DropdownMenuSeparator class="menu-sep" />
                 <DropdownMenuItem class="menu-item" @select="onLogout">退出登录</DropdownMenuItem>
               </DropdownMenuContent>

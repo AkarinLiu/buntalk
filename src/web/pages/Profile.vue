@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { errMessage, http, uploadFile } from '../api'
 import type { ProfileResponse, ThreadsResponse } from '../api'
 import type { PublicUser, SelfUser, ThreadRow } from '../../shared/types'
-import { auth } from '../store'
+import { auth, groupById } from '../store'
 import EmailBindCard from '../components/EmailBindCard.vue'
 import UserAvatar from '../components/UserAvatar.vue'
+import UserGroupBadge from '../components/UserGroupBadge.vue'
 
 const props = defineProps<{ username: string }>()
 
@@ -27,6 +28,8 @@ const uploadingAvatar = ref(false)
 function isSelf(): boolean {
   return !!auth.user && !!user.value && auth.user.id === user.value.id
 }
+
+const userGroup = computed(() => groupById(user.value?.groupId))
 
 async function load(): Promise<void> {
   loading.value = true
@@ -136,6 +139,7 @@ const joined = (iso: string) => iso.slice(0, 10)
             <span v-if="user.role === 'admin'" class="pill pill-accent" style="margin-left: 6px">
               管理员
             </span>
+            <UserGroupBadge :group="userGroup" style="margin-left: 6px" />
           </div>
           <p v-if="user.bio" class="profile-bio">{{ user.bio }}</p>
           <p v-else class="faint" style="margin: 10px 0 0; font-size: 14px">这个人很懒，什么都没写。</p>
@@ -161,6 +165,14 @@ const joined = (iso: string) => iso.slice(0, 10)
             <button class="btn btn-sm" type="button" @click="editing = !editing">
               {{ editing ? '取消编辑' : '编辑资料' }}
             </button>
+          </div>
+          <div v-else-if="auth.user">
+            <router-link
+              class="btn btn-sm"
+              :to="`/messages?to=${encodeURIComponent(user.username)}`"
+            >
+              发私信
+            </router-link>
           </div>
         </div>
       </section>
